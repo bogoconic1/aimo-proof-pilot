@@ -84,15 +84,36 @@ At startup, the script prints the proof dataset path, verifiable dataset path, v
 
 ## OPD Environment
 
-`src/proof_opd_env.py` uses a staged pipeline:
+`src/proof_opd_env.py` implements the Prime-RL environment used by the command above. It is intentionally self-contained: it reads CSV/JSON/Parquet rows, builds prompts, tracks per-sample stage state, computes reward, and exposes W&B metrics through the Prime-RL rubric interface.
+
+Dataset workflow:
+
+1. Load the proof dataset from `--prime_proof_dataset_path`.
+2. Load the optional verifiable dataset from `--prime_proof_verifiable_dataset_path`.
+3. Normalize proof rows into `task_type=proof` examples using `question`, `problem`, or the first user message.
+4. Normalize verifiable rows into `task_type=verifiable` examples using `problem`/`question` plus `answer`.
+5. Mix rows deterministically with `--prime_proof_verifiable_fraction` and `--prime_proof_mix_seed`. If the verifiable file is small, rows are repeated to preserve the requested fraction.
+6. Store task metadata in each row's `info` field, including `task_type`, `task_id`, `source_index`, and `gold_answer` for verifiable rows.
+
+Runtime workflow:
 
 1. Proof generation prompt.
-2. Extract `## Solution` from the assistant output.
-3. Verifier prompt over the extracted proof.
-4. Meta-verifier prompt over the verifier analysis.
-5. Optional refinement round if the selected reward is below the early-stop threshold.
+2. Parse the assistant output and require a closed `</think>` unless `--prime_proof_require_closed_think false` is used.
+3. Extract only the visible `## Solution` section; if the generation is truncated or malformed, stop the trace and assign zero proof reward.
+4. Run a verifier prompt over the extracted proof.
+5. If verifier output is valid, run a meta-verifier prompt over the verifier analysis.
+6. Compute `reward = format_score * verifier_score * meta_score`, clamped to `[0, 1]`.
+7. Optionally run a refinement round when the selected reward is below `--prime_proof_refine_early_stop_reward`.
 
 For verifiable tasks, the proof-generation prompt additionally asks the model to include one final answer in `\boxed{...}` inside the `## Solution` section. The boxed answer is used only for metrics; the OPD proof/verifier/meta reward path stays unchanged.
+
+Verifier and meta-verifier calls are local model calls in this OPD setup, not OpenRouter/API calls. `--prime_proof_judge_backend none` is expected for the current command.
+
+Invalid-output behavior:
+
+- If proof generation reaches the token limit or omits a closed thinking block, verifier/meta stages are skipped.
+- If verifier output is invalid or reaches the token limit, meta verification is skipped and the proof score falls back to zero.
+- For verifiable rows, boxed-answer accuracy is still reported when a boxed answer can be extracted from a valid solution section; otherwise it reports `0`.
 
 Important W&B metrics:
 
