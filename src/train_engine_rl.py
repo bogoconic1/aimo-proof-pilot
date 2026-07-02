@@ -149,9 +149,35 @@ def build_prime_env_config(args: argparse.Namespace) -> dict[str, Any]:
     effective_env_id = args.prime_env_id
     effective_env_name = args.prime_env_name
     if args.prime_proof_dataset_path and effective_env_id == "math-env":
-        effective_env_id = "deepseek-math-v2-env"
+        effective_env_id = "proof-opd-env" if args.prime_algorithm == "opd" else "deepseek-math-v2-env"
         if effective_env_name == "math":
             effective_env_name = "proof_math"
+
+    if effective_env_id in {"proof-opd-env", "proof_opd_env"}:
+        dataset_path = args.prime_proof_dataset_path or args.dataset_path
+        if not dataset_path:
+            raise ValueError(
+                "--prime_proof_dataset_path or --dataset_path is required when using "
+                "--prime_env_id proof-opd-env."
+            )
+        refine_rounds = args.prime_proof_refine_rounds
+        if args.prime_algorithm == "opd" and refine_rounds == 0:
+            refine_rounds = 1
+        return {
+            "id": effective_env_id,
+            "name": effective_env_name if effective_env_name != "math" else "proof_math",
+            "args": {
+                "dataset_path": dataset_path,
+                "problem_column": args.prime_proof_problem_column,
+                "solution_column": args.prime_proof_solution_column,
+                "max_examples": args.prime_proof_max_examples,
+                "enable_meta_verification": args.prime_proof_enable_meta_verification,
+                "partial_format_score": args.prime_proof_partial_format_score,
+                "require_closed_think": args.prime_proof_require_closed_think,
+                "refine_rounds": refine_rounds,
+                "refine_early_stop_reward": args.prime_proof_refine_early_stop_reward,
+            },
+        }
 
     if effective_env_id in {"deepseek-math-v2-env", "deepseek_math_v2_env"}:
         dataset_path = args.prime_proof_dataset_path or args.dataset_path
@@ -239,6 +265,7 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
         "seq_len": args.max_seq_length,
         "max_steps": args.max_train_steps,
         "max_inflight_rollouts": args.prime_max_inflight_rollouts,
+        "max_off_policy_steps": args.prime_max_off_policy_steps,
         "oversampling_factor": args.prime_oversampling_factor,
     }
     if args.prime_disable_zero_advantage_filter:
@@ -258,6 +285,23 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
             "base_url": [args.prime_opd_teacher_base_url or f"http://localhost:{args.prime_opd_teacher_port}/v1"],
             "skip_model_check": args.prime_opd_teacher_skip_model_check,
         }
+
+    trainer_optim = {
+        "type": args.optimizer,
+        "lr": args.learning_rate,
+        "weight_decay": args.weight_decay,
+        "max_norm": args.max_grad_norm,
+    }
+    if args.optimizer == "te_fused_adamw":
+        trainer_optim.update(
+            {
+                "exp_avg_dtype": args.prime_te_adamw_exp_avg_dtype,
+                "exp_avg_sq_dtype": args.prime_te_adamw_exp_avg_sq_dtype,
+                "master_weight_dtype": args.prime_te_adamw_master_weight_dtype,
+                "master_weights": args.prime_te_adamw_master_weights,
+                "store_param_remainders": args.prime_te_adamw_store_param_remainders,
+            }
+        )
 
     return {
         "root": {
@@ -299,12 +343,7 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
             "cp_style": args.prime_trainer_cp_style,
             "fp8": args.prime_trainer_fp8,
         },
-        "trainer_optim": {
-            "type": args.optimizer,
-            "lr": args.learning_rate,
-            "weight_decay": args.weight_decay,
-            "max_norm": args.max_grad_norm,
-        },
+        "trainer_optim": trainer_optim,
         "orchestrator": orchestrator_config,
         "orchestrator_algo": orchestrator_algo,
         "orchestrator_algo_teacher": orchestrator_algo_teacher,
@@ -435,6 +474,55 @@ def stop_process(process: subprocess.Popen | None, name: str) -> None:
         process.wait(timeout=30)
 
 
+def parse_env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def enable_system_nccl_preload_for_transformer_engine(args: argparse.Namespace) -> None:
+    """Force TE/CUBLASMP to bind against system NCCL before PyTorch's wheel NCCL.
+
+    The CUDA image can contain both the apt-installed NCCL and the Python wheel
+    copy under ``site-packages/nvidia/nccl``. Transformer Engine's CUDA 13 stack
+    needs newer NCCL symbols such as ``ncclCommQueryProperties``; if PyTorch
+    loads the wheel copy first, ``libcublasmp.so`` fails to import.
+    """
+
+    if args.optimizer != "te_fused_adamw":
+        return
+    if not parse_env_bool("PRIME_RL_PRELOAD_SYSTEM_NCCL", True):
+        log("Skipping system NCCL preload because PRIME_RL_PRELOAD_SYSTEM_NCCL is disabled.")
+        return
+
+    configured = os.environ.get("PRIME_RL_SYSTEM_NCCL_PATH")
+    candidates = [
+        configured,
+        "/usr/lib/x86_64-linux-gnu/libnccl.so.2",
+        "/usr/lib/x86_64-linux-gnu/libnccl.so",
+        "/usr/local/cuda/lib64/libnccl.so.2",
+        "/usr/local/cuda/lib64/libnccl.so",
+    ]
+    nccl_path = next((Path(path) for path in candidates if path and Path(path).exists()), None)
+    if nccl_path is None:
+        log("WARNING: could not find a system NCCL library to preload for Transformer Engine.")
+        return
+
+    existing_preload = os.environ.get("LD_PRELOAD", "")
+    preload_parts = [part for part in existing_preload.split() if part]
+    if str(nccl_path) not in preload_parts:
+        os.environ["LD_PRELOAD"] = " ".join([str(nccl_path), *preload_parts])
+
+    lib_dir = str(nccl_path.parent)
+    existing_library_path = os.environ.get("LD_LIBRARY_PATH", "")
+    library_parts = [part for part in existing_library_path.split(os.pathsep) if part]
+    if lib_dir not in library_parts:
+        os.environ["LD_LIBRARY_PATH"] = os.pathsep.join([lib_dir, *library_parts])
+
+    log(f"Preloading system NCCL for Transformer Engine: {nccl_path}")
+
+
 def wait_for_http_ready(url: str, process: subprocess.Popen, log_path: Path, timeout_s: int) -> None:
     deadline = time.monotonic() + timeout_s
     last_error = ""
@@ -509,6 +597,11 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     parser.add_argument("--optimizer", default="adamw")
+    parser.add_argument("--prime_te_adamw_exp_avg_dtype", default="bfloat16", choices=("bfloat16", "float32"))
+    parser.add_argument("--prime_te_adamw_exp_avg_sq_dtype", default="bfloat16", choices=("bfloat16", "float32"))
+    parser.add_argument("--prime_te_adamw_master_weight_dtype", default="bfloat16", choices=("bfloat16", "float32"))
+    parser.add_argument("--prime_te_adamw_master_weights", type=parse_bool, default=False)
+    parser.add_argument("--prime_te_adamw_store_param_remainders", type=parse_bool, default=False)
     parser.add_argument("--clean_output_dir", action="store_true")
     parser.add_argument("--dry_run_prime_rl", action="store_true")
     parser.add_argument("--prime_log_level", default="debug")
@@ -541,6 +634,7 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--prime_proof_self_eval_weight", type=float, default=0.24)
     parser.add_argument("--prime_proof_partial_format_score", type=float, default=0.7)
     parser.add_argument("--prime_proof_enable_meta_verification", type=parse_bool, default=True)
+    parser.add_argument("--prime_proof_require_closed_think", type=parse_bool, default=True)
     parser.add_argument("--prime_proof_require_format", type=parse_bool, default=True)
     parser.add_argument("--prime_proof_refine_rounds", type=int, default=0)
     parser.add_argument("--prime_proof_refine_review_n", type=int, default=1)
@@ -549,6 +643,16 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--prime_batch_size", type=int, default=2)
     parser.add_argument("--prime_group_size", type=int, default=2)
     parser.add_argument("--prime_max_inflight_rollouts", type=int, default=None)
+    parser.add_argument(
+        "--prime_max_off_policy_steps",
+        type=int,
+        default=8,
+        help=(
+            "Maximum policy-update lag allowed for in-flight train rollouts before "
+            "Prime-RL cancels them. Increase this with --prime_max_inflight_rollouts "
+            "to keep rollout and trainer processes asynchronous."
+        ),
+    )
     parser.add_argument("--prime_oversampling_factor", type=float, default=None)
     parser.add_argument("--prime_disable_zero_advantage_filter", type=parse_bool, default=False)
     parser.add_argument("--prime_skip_model_check", type=parse_bool, default=True)
@@ -559,7 +663,7 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--prime_infer_gpus", type=int, default=1)
     parser.add_argument("--prime_gpus_per_node", type=int, default=2)
     parser.add_argument("--prime_trainer_model_impl", default="hf", choices=("hf", "custom", "auto"))
-    parser.add_argument("--prime_trainer_attn", default="flash_attention_3")
+    parser.add_argument("--prime_trainer_attn", default="olmo3_sink_fa3")
     parser.add_argument("--prime_trainer_fsdp_cpu_offload", type=parse_bool, default=False)
     parser.add_argument("--prime_trainer_optim_cpu_offload", type=parse_bool, default=True)
     parser.add_argument("--prime_trainer_optimization_dtype", default="bfloat16", choices=("bfloat16", "float32"))
@@ -642,6 +746,7 @@ def main(argv: list[str] | None = None) -> int:
     os.environ.setdefault("RAY_DEDUP_LOGS", "1")
     if args.wandb_mode:
         os.environ["WANDB_MODE"] = args.wandb_mode
+    enable_system_nccl_preload_for_transformer_engine(args)
 
     config_path = log_dir / "prime_rl.toml"
     config = build_prime_rl_config(args, output_dir)
