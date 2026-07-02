@@ -6,7 +6,6 @@ training and inference. It supports:
 - supervised fine-tuning with OLMo-core and Open-Instruct data conversion,
 - Prime-RL experiments for OLMo3Sink / OPD training,
 - Singularity container builds for cluster execution,
-- public inference through `src/run.py`.
 
 Model weights, large datasets, cache directories, `.sif` images, and private
 credentials are intentionally not stored in this repository.
@@ -15,7 +14,6 @@ credentials are intentionally not stored in this repository.
 
 | Path | Purpose |
 |---|---|
-| `src/run.py` | Public inference entry point. Reads an input CSV and writes predictions. |
 | `src/train.py` | Training wrapper. Fetches runtime updates and dispatches to SFT, Prime-RL, VERL, or operator mode. |
 | `src/train_engine.py` | OLMo-core / Open-Instruct SFT backend and sweep utilities. |
 | `src/train_engine_rl.py` | Prime-RL backend for OLMo3Sink / OPD experiments. |

@@ -13,9 +13,16 @@ artifacts/
 latex/
 environ*
 # operator_commands/*
-# operator_commands/phase1*
-# operator_commands/phase2*
-# operator_commands/rl_*
+*.sif
+*.parquet
+wandb/
+weights/
+**/__pycache__/
+# operator_commands/*
+operator_commands/phase1*
+operator_commands/phase2*
+operator_commands/rl_*
+operator_commands/kill_*
 olmo3_sink/*
 patch-olmo3-sink-infer/*
 
