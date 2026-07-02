@@ -12,8 +12,9 @@ FLASHINFER_INDEX_URL="${FLASHINFER_INDEX_URL:-https://flashinfer.ai/whl/cu130}"
 FLASH_ATTN_WHEEL_URL="${FLASH_ATTN_WHEEL_URL:-https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu130torch2.11-cp312-cp312-linux_x86_64.whl}"
 FLASH_ATTN_3_WHEEL_URL="${FLASH_ATTN_3_WHEEL_URL:-https://github.com/windreamer/flash-attention3-wheels/releases/download/2026.05.11-5e0e3b1/flash_attn_3-3.0.0+20260511.cu130torch2110cxx11abitrue.ab6632-cp39-abi3-linux_x86_64.whl}"
 FLASH_ATTN_4_WHEEL_URL="${FLASH_ATTN_4_WHEEL_URL:-https://github.com/Dao-AILab/flash-attention/releases/download/fa4-v4.0.0.beta15/flash_attn_4-4.0.0b15-py3-none-any.whl}"
-VLLM_WHEEL_URL="${VLLM_WHEEL_URL:-https://github.com/vllm-project/vllm/releases/download/v0.23.0/vllm-0.23.0-cp38-abi3-manylinux_2_28_x86_64.whl}"
+VLLM_WHEEL_URL="${VLLM_WHEEL_URL:-https://wheels.vllm.ai/f5a8d73377d0f0a4e00cba172f9fbd0d50471b07/vllm-0.23.1rc1.dev699%2Bgf5a8d7337-cp38-abi3-manylinux_2_28_x86_64.whl}"
 TVM_FFI_SPEC="${TVM_FFI_SPEC:-apache-tvm-ffi<0.1.12}"
+NVIDIA_CUTLASS_DSL_SPEC="${NVIDIA_CUTLASS_DSL_SPEC:-nvidia-cutlass-dsl[cu13]==4.4.2}"
 PREBUILT_WHEELS_DIR="${PREBUILT_WHEELS_DIR:-torch2.11+cu130}"
 TRANSFORMER_ENGINE_WHEEL_REPO="nguyen599/prebuild-wheels-util"
 TRANSFORMER_ENGINE_WHEEL_FILE="${TRANSFORMER_ENGINE_WHEEL_FILE:-${PREBUILT_WHEELS_DIR}/transformer_engine-2.17.0.dev0-cp312-cp312-linux_x86_64.whl}"
@@ -26,12 +27,18 @@ INSTALL_FLASH_ATTN_4="${INSTALL_FLASH_ATTN_4:-1}"
 INSTALL_TRANSFORMER_ENGINE="${INSTALL_TRANSFORMER_ENGINE:-1}"
 INSTALL_MEGATRON_CORE="${INSTALL_MEGATRON_CORE:-1}"
 INSTALL_LIGER_KERNEL="${INSTALL_LIGER_KERNEL:-1}"
+INSTALL_VERL_PACKAGE="${INSTALL_VERL_PACKAGE:-1}"
+INSTALL_PRIME_RL_DEPS="${INSTALL_PRIME_RL_DEPS:-1}"
 MEGATRON_CORE_REPO="${MEGATRON_CORE_REPO:-https://github.com/NVIDIA/Megatron-LM.git}"
 MEGATRON_CORE_REF="${MEGATRON_CORE_REF:-main}"
 MEGATRON_CORE_DIR="${MEGATRON_CORE_DIR:-/opt/Megatron-LM}"
 LIGER_KERNEL_REPO="${LIGER_KERNEL_REPO:-https://github.com/linkedin/Liger-Kernel.git}"
 LIGER_KERNEL_REF="${LIGER_KERNEL_REF:-main}"
 LIGER_KERNEL_DIR="${LIGER_KERNEL_DIR:-/opt/Liger-Kernel}"
+VERL_PACKAGE="${VERL_PACKAGE:-git+https://github.com/verl-project/verl.git}"
+TORCHTITAN_REQUIREMENT="${TORCHTITAN_REQUIREMENT:-torchtitan @ git+https://github.com/pytorch/torchtitan.git@a1fdd7e}"
+DION_REQUIREMENT="${DION_REQUIREMENT:-dion @ git+https://github.com/samsja/dion.git@d891eeb}"
+DEEP_EP_REQUIREMENT="${DEEP_EP_REQUIREMENT:-deep-ep @ https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.2.1+29d31c0-cp312-cp312-linux_x86_64.whl}"
 VERIFY_MAMBA_SSM_IMPORT="${VERIFY_MAMBA_SSM_IMPORT:-0}"
 VERIFY_TRANSFORMER_ENGINE_IMPORT="${VERIFY_TRANSFORMER_ENGINE_IMPORT:-0}"
 INSTALL_FULL_SYSTEM_APT="${INSTALL_FULL_SYSTEM_APT:-1}"
@@ -102,6 +109,7 @@ try_download_hf_wheel() {
     local output_path="$3"
     local download_status
     local tmp_dir
+    local hf_token_args=()
 
     if [ -s "${output_path}" ]; then
         echo "Reusing cached HF wheel: ${output_path}"
@@ -110,11 +118,14 @@ try_download_hf_wheel() {
 
     set +x
     ensure_hf_cli
+    if [ -n "${HF_TOKEN:-}" ]; then
+        hf_token_args=(--token "${HF_TOKEN}")
+    fi
     tmp_dir="$(mktemp -d "${MODAL_EXTRAS_CACHE}/hf-wheel-download.XXXXXX")"
     if HF_XET_HIGH_PERFORMANCE=1 hf download \
         --repo-type dataset \
         --local-dir "${tmp_dir}" \
-        --token "${HF_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}" \
+        "${hf_token_args[@]}" \
         "${repo}" \
         "${repo_path}"; then
         download_status=0
@@ -272,8 +283,9 @@ uv pip install --system --no-cache-dir \
     "cuda-toolkit[all]==${CUDA_VERSION}" \
     nvidia-cublasmp-cu13==0.8.0.2023 \
     nvidia-cuda-cccl \
+    nvidia-cuda-runtime-cu12 \
     nvidia-cudnn-frontend==1.24.0 \
-    "nvidia-cutlass-dsl[cu13]==4.5.2" \
+    "${NVIDIA_CUTLASS_DSL_SPEC}" \
     nvidia-ml-py \
     nvshmem4py-cu13
 
@@ -435,9 +447,26 @@ PY
 fi
 
 uv pip install --system --no-cache-dir \
+    hatchling \
+    editables \
     poetry_dynamic_versioning \
     poetry \
     grpcio-tools
+
+if [ "${INSTALL_VERL_PACKAGE}" = "1" ]; then
+    uv pip install --system --no-cache-dir "${VERL_PACKAGE}"
+else
+    echo "Skipping VERL package install because INSTALL_VERL_PACKAGE=${INSTALL_VERL_PACKAGE}."
+fi
+
+if [ "${INSTALL_PRIME_RL_DEPS}" = "1" ]; then
+    uv pip install --system --no-cache-dir \
+        "${TORCHTITAN_REQUIREMENT}" \
+        "${DION_REQUIREMENT}" \
+        "${DEEP_EP_REQUIREMENT}"
+else
+    echo "Skipping Prime-RL dependency install because INSTALL_PRIME_RL_DEPS=${INSTALL_PRIME_RL_DEPS}."
+fi
 
 if python_dist_ok nvidia-resiliency-ext; then
     echo "Skipping nvidia-resiliency-ext install; distribution is already installed."

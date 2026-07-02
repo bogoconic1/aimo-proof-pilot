@@ -34,11 +34,13 @@ cached-path
 cmake
 decord
 einops
+editables
 fastsafetensors
 flash-linear-attention
 flit-core
 gantry
 gpt-oss
+hatchling
 hydra-core==1.3.2
 json-repair
 jsonlines

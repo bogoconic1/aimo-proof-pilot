@@ -58,7 +58,7 @@ DEFAULT_RUNTIME_DEP_RETRY_BASE_SECONDS = 5.0
 DEFAULT_RUNTIME_DEP_RETRY_MAX_SECONDS = 60.0
 DEFAULT_RUN_DIR_MARKER_TIMEOUT_SECONDS = 300.0
 DEFAULT_RUN_DIR_MARKER_POLL_SECONDS = 0.5
-DEFAULT_GRPO_RUNTIME_VLLM_VERSION = "0.23.0"
+DEFAULT_GRPO_RUNTIME_VLLM_VERSION = "0.23.1rc1.dev699+gf5a8d7337"
 DEFAULT_GRPO_RUNTIME_VLLM_CUDA_VERSION = "130"
 DEFAULT_VLLM_RUNTIME_WHEEL_URL = (
     "https://wheels.vllm.ai/f5a8d73377d0f0a4e00cba172f9fbd0d50471b07/"
@@ -1251,7 +1251,9 @@ def runtime_training_deps_settings(wrapper_args: argparse.Namespace) -> dict[str
         "grpo_runtime_vllm_cuda_version": os.environ.get(
             "GRPO_RUNTIME_VLLM_CUDA_VERSION", DEFAULT_GRPO_RUNTIME_VLLM_CUDA_VERSION
         ).strip(),
-        "grpo_runtime_vllm_wheel_url": os.environ.get("GRPO_RUNTIME_VLLM_WHEEL_URL", "").strip(),
+        "grpo_runtime_vllm_wheel_url": os.environ.get(
+            "GRPO_RUNTIME_VLLM_WHEEL_URL", DEFAULT_VLLM_RUNTIME_WHEEL_URL
+        ).strip(),
         "grpo_runtime_vllm_arch": os.environ.get("GRPO_RUNTIME_VLLM_ARCH", "").strip(),
     }
 
