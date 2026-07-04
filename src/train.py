@@ -174,6 +174,12 @@ DEFAULT_PRIME_RL_RUNTIME_REQUIREMENTS = (
     "fastapi>=0.133,<0.137",
     "starlette>=1.0.1,<2.0",
     "prometheus-fastapi-instrumentator>=8.0.0",
+    # Prime-RL's W&B monitor imports the historical wandb_gql module. Our
+    # runtime source tree provides a compatibility module backed by
+    # graphql-core, and these versions match current Prime-RL metadata.
+    "graphql-core>=3.2.0",
+    "wandb>=0.26.1",
+    "wandb-workspaces>=0.4.3",
     "nltk>=3.9.1",
     "jaxtyping>=0.3.2",
 )
