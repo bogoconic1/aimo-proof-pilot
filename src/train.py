@@ -182,6 +182,7 @@ DEFAULT_PRIME_RL_RUNTIME_REQUIREMENTS = (
     "wandb-workspaces>=0.4.3",
     "nltk>=3.9.1",
     "jaxtyping>=0.3.2",
+    "weave"
 )
 PROTECTED_RUNTIME_OVERLAY_PACKAGES = (
     "flash_attn",
