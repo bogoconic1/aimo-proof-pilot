@@ -36,6 +36,7 @@ PROOF_REFINE_REVIEW_N="${PRIME_PROOF_REFINE_REVIEW_N:-2}"
 CHECKPOINT_INTERVAL="${PRIME_CHECKPOINT_INTERVAL:-10}"
 CHECKPOINT_KEEP_LAST="${PRIME_CHECKPOINT_KEEP_LAST:-2}"
 CHECKPOINT_KEEP_INTERVAL="${PRIME_CHECKPOINT_KEEP_INTERVAL:-0}"
+CHECKPOINT_WEIGHTS_ONLY="${PRIME_CHECKPOINT_WEIGHTS_ONLY:-true}"
 
 TRAIN_GPUS="${PRIME_TRAIN_GPUS:-2}"
 INFER_GPUS="${PRIME_INFER_GPUS:-1}"
@@ -68,7 +69,7 @@ echo "[prime-opd] vllm policy_tp=${POLICY_TP} policy_dp=${POLICY_DP} teacher_tp=
 echo "[prime-opd] teacher_vllm_extra=${TEACHER_VLLM_EXTRA:-<none>}"
 echo "[prime-opd] vllm_deep_gemm policy=${POLICY_USE_DEEP_GEMM} teacher=${TEACHER_USE_DEEP_GEMM}"
 echo "[prime-opd] proof_num_verifiers=${PROOF_NUM_VERIFIERS} refine_review_n=${PROOF_REFINE_REVIEW_N}"
-echo "[prime-opd] checkpoint_interval=${CHECKPOINT_INTERVAL} checkpoint_keep_last=${CHECKPOINT_KEEP_LAST} checkpoint_keep_interval=${CHECKPOINT_KEEP_INTERVAL}"
+echo "[prime-opd] checkpoint_interval=${CHECKPOINT_INTERVAL} checkpoint_keep_last=${CHECKPOINT_KEEP_LAST} checkpoint_keep_interval=${CHECKPOINT_KEEP_INTERVAL} checkpoint_weights_only=${CHECKPOINT_WEIGHTS_ONLY}"
 
 /usr/bin/python /app/train.py \
   --fetch-update \
@@ -92,6 +93,7 @@ echo "[prime-opd] checkpoint_interval=${CHECKPOINT_INTERVAL} checkpoint_keep_las
   --prime_checkpoint_interval "${CHECKPOINT_INTERVAL}" \
   --prime_checkpoint_keep_last "${CHECKPOINT_KEEP_LAST}" \
   --prime_checkpoint_keep_interval "${CHECKPOINT_KEEP_INTERVAL}" \
+  --prime_checkpoint_weights_only "${CHECKPOINT_WEIGHTS_ONLY}" \
   --prime_algorithm opd \
   --prime_opd_teacher_model "${TEACHER_MODEL_PATH}" \
   --prime_opd_start_teacher true \
