@@ -15,7 +15,7 @@ MASTER_HOST="${MASTER_ADDR:-hnode096}"
 PORT="${MASTER_PORT:-29612}"
 RUN_NAME="rlcsd_verl_async_cispo_32b_1train_2rollout_imo4x8_100steps_fp8_phase3ckpt9"
 MODEL_HF="${MODEL_HF:-/tmp/olmo3_phase2/outputs/phase2_32b_tp8_pp3_seq65536/phase2_32b_tp8_pp3_seq65536/.hf_converted_checkpoints/step1100-hf}"
-DATASET="${DATASET:-/tmp/submissions-instructions-runtime/imo_data_1959_2024.csv}"
+DATASET="${DATASET:-/tmp/aimo-proof-pilot-runtime/imo_data_1959_2024.csv}"
 
 export VLLM_ALLOW_INSECURE_SERIALIZATION=1
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1

@@ -5,7 +5,7 @@
 - **Environment ID**: `proof_opd_env`
 - **Purpose**: evaluate or train proof-oriented OPD traces with a DeepSeekMath-V2-style workflow.
 - **Task type**: multi-turn math proof generation, verification, meta-verification, and optional refinement.
-- **Primary file**: `proof_opd_env.py`, copied from `submissions-instructions/src/proof_opd_env.py` for standalone `vf-eval` use.
+- **Primary file**: `proof_opd_env.py`, copied from `aimo-proof-pilot/src/proof_opd_env.py` for standalone `vf-eval` use.
 
 The environment asks the model to solve a proof/math problem, then re-prompts the same model as a verifier and meta-verifier. It is intended for checking whether the OPD environment logic, trace formatting, and metrics behave correctly before running Prime-RL.
 
@@ -54,7 +54,7 @@ Bundled local examples:
 Run from this folder:
 
 ```bash
-cd submissions-instructions/proof_opd_env
+cd aimo-proof-pilot/proof_opd_env
 ```
 
 Long-context AIME eval:

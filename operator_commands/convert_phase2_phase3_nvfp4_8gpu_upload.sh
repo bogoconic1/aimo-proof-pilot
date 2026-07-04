@@ -35,7 +35,7 @@ PHASE3_MODEL="${PHASE3_ROOT}/olmo3_32b_rl_2gen_1train_long__42__1781876839_check
 PHASE3_EXPORT="${PHASE3_ROOT}/step15-hf-nvfp4"
 DATA_PATH="/groups/gcg51557/experiments/0371_aimo/containers/team1/train_phase2.parquet"
 CALIB_PATH="/tmp/olmo3_rl/data/phase2_modelopt_calib_6144.jsonl"
-SUBMISSIONS_DIR="/tmp/submissions-instructions-runtime"
+SUBMISSIONS_DIR="/tmp/aimo-proof-pilot-runtime"
 WORK_ROOT="/tmp/olmo3_nvfp4_parallel_$(date -u +%Y%m%d_%H%M%S)"
 mkdir -p "${WORK_ROOT}/logs" "${WORK_ROOT}/status"
 
@@ -50,7 +50,7 @@ if [ -d "${SUBMISSIONS_DIR}/.git" ]; then
 else
   echo "Cloning submissions repo"
   rm -rf "${SUBMISSIONS_DIR}"
-  git clone --depth 1 --branch main https://github.com/nguyen599/submissions-instructions.git "${SUBMISSIONS_DIR}"
+  git clone --depth 1 --branch main https://github.com/nguyen599/aimo-proof-pilot.git "${SUBMISSIONS_DIR}"
 fi
 PREPARE_SCRIPT="${SUBMISSIONS_DIR}/scripts/prepare_modelopt_calib.py"
 [ -f "${PREPARE_SCRIPT}" ] || { echo "ERROR: missing ${PREPARE_SCRIPT}"; exit 5; }

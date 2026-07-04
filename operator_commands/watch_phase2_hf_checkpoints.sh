@@ -10,10 +10,10 @@ export PYTHONUNBUFFERED=1
 export HF_HUB_DISABLE_PROGRESS_BARS=1
 export TQDM_DISABLE=1
 
-WORK_DIR="/tmp/submissions-instructions-hf-watcher-${OLMO_RUN_DIR_NAME:-phase2-watch}"
+WORK_DIR="/tmp/aimo-proof-pilot-hf-watcher-${OLMO_RUN_DIR_NAME:-phase2-watch}"
 echo "starting phase2 HF checkpoint watcher node=${NODE_LABEL} work_dir=${WORK_DIR}"
 rm -rf "${WORK_DIR}"
-git clone --depth 1 https://github.com/nguyen599/submissions-instructions.git "${WORK_DIR}"
+git clone --depth 1 https://github.com/nguyen599/aimo-proof-pilot.git "${WORK_DIR}"
 git -C "${WORK_DIR}" rev-parse HEAD
 
 python -u "${WORK_DIR}/src/hf_checkpoint_watcher.py" \

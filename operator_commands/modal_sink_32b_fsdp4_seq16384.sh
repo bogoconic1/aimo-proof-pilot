@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Manual Modal smoke for OLMo3 sink 32B on 4xH200 with FSDP2.
 # Run inside the Modal training image:
-#   bash /workspace/submissions-instructions/operator_commands/modal_sink_32b_fsdp4_seq16384.sh
+#   bash /workspace/aimo-proof-pilot/operator_commands/modal_sink_32b_fsdp4_seq16384.sh
 #
 # Override DATASET_PATH to use the full dataset. The default smoke dataset keeps
 # the run cheap and checks conversion, attention sinks, FSDP2, compile, and the

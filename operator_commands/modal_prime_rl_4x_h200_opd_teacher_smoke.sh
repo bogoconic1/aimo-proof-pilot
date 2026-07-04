@@ -8,7 +8,7 @@ set -euo pipefail
 #   GPU 3: frozen OPD teacher vLLM
 #
 # Run inside the Modal training image:
-#   bash /workspace/submissions-instructions/operator_commands/modal_prime_rl_4x_h200_opd_teacher_smoke.sh
+#   bash /workspace/aimo-proof-pilot/operator_commands/modal_prime_rl_4x_h200_opd_teacher_smoke.sh
 
 STAMP="$(date -u +%Y%m%d_%H%M%S)"
 RUN_NAME="${RUN_NAME:-prime_rl_4x_opd_teacher_smoke_${STAMP}}"

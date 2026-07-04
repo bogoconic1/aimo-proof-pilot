@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PYTHONPATH="/workspace/submissions-instructions/src:/opt/OLMo-core/src:/opt/open-instruct:${PYTHONPATH:-}"
+export PYTHONPATH="/workspace/aimo-proof-pilot/src:/opt/OLMo-core/src:/opt/open-instruct:${PYTHONPATH:-}"
 export OPEN_INSTRUCT_DIR="${OPEN_INSTRUCT_DIR:-/opt/open-instruct}"
 export OLMO_CORE_DIR="${OLMO_CORE_DIR:-/opt/OLMo-core}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
@@ -26,7 +26,7 @@ CP="${CP:-1}"
 PP="${PP:-1}"
 MASTER_PORT="${MASTER_PORT:-29631}"
 RUN_NAME="${RUN_NAME:-modal_sink_32b_fsdp${NUM_GPUS}_seq${MAX_SEQ_LENGTH}_steps${MAX_TRAIN_STEPS}}"
-TRAIN_ENTRY="${TRAIN_ENTRY:-/workspace/submissions-instructions/src/train.py}"
+TRAIN_ENTRY="${TRAIN_ENTRY:-/workspace/aimo-proof-pilot/src/train.py}"
 SUBMISSIONS_REF="${SUBMISSIONS_REF:-main}"
 RUNTIME_FETCH_STATE_DIR="${RUNTIME_FETCH_STATE_DIR:-/tmp/train-runtime-fetch-${RUN_NAME}}"
 DISABLE_CHECKPOINTS="${DISABLE_CHECKPOINTS:-true}"

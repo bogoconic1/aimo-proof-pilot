@@ -56,7 +56,7 @@ Default data mix:
 
 - `imo_data_1959_2024.csv` supplies proof-only tasks.
 - `astralbench.csv` supplies verifiable tasks.
-- `PRIME_OPD_VERIFIABLE_DATASET_PATH` selects the verifiable CSV, defaulting to `/workspace/submissions-instructions/astralbench.csv`.
+- `PRIME_OPD_VERIFIABLE_DATASET_PATH` selects the verifiable CSV, defaulting to `/workspace/aimo-proof-pilot/astralbench.csv`.
 - `PRIME_OPD_VERIFIABLE_FRACTION=0.20` mixes 20% verifiable rows into the train environment.
 - `PRIME_OPD_VERIFIABLE_MIX_SEED=34521` makes the mixed proof/verifiable ordering reproducible.
 - `PRIME_PROOF_MAX_EXAMPLES=20` keeps the default launch cheap. Increase it for real runs, for example `PRIME_PROOF_MAX_EXAMPLES=1481`.
@@ -66,8 +66,8 @@ Example container-style launch:
 ```bash
 export PRIME_OPD_MODEL_PATH=/vol/olmo_train_assets/models/opd-32b-deploy/opd-32b-deploy
 export PRIME_OPD_TEACHER_MODEL_PATH="$PRIME_OPD_MODEL_PATH"
-export PRIME_OPD_DATASET_PATH=/workspace/submissions-instructions/imo_data_1959_2024.csv
-export PRIME_OPD_VERIFIABLE_DATASET_PATH=/workspace/submissions-instructions/astralbench.csv
+export PRIME_OPD_DATASET_PATH=/workspace/aimo-proof-pilot/imo_data_1959_2024.csv
+export PRIME_OPD_VERIFIABLE_DATASET_PATH=/workspace/aimo-proof-pilot/astralbench.csv
 export PRIME_OPD_VERIFIABLE_FRACTION=0.20
 export PRIME_OPD_VERIFIABLE_MIX_SEED=34521
 export PRIME_PROOF_MAX_EXAMPLES=1481
@@ -78,7 +78,7 @@ export WANDB_PROJECT=olmo3-prime-rl
 bash operator_commands/prime_rl_opd_4xh200_muon_imo_ctx16384_2train_1policy_1teacher.sh
 ```
 
-The script expects `/app/train.py` inside the image and writes outputs/logs under `/vol/olmo_train_assets/`. Mount this repository at `/workspace/submissions-instructions` and mount a writable volume at `/vol/olmo_train_assets`.
+The script expects `/app/train.py` inside the image and writes outputs/logs under `/vol/olmo_train_assets/`. Mount this repository at `/workspace/aimo-proof-pilot` and mount a writable volume at `/vol/olmo_train_assets`.
 
 At startup, the script prints the proof dataset path, verifiable dataset path, verifiable fraction, mix seed, max example count, context length, and rollout completion-token cap. Check these lines first when validating that a run is using the intended mixer settings.
 
@@ -152,13 +152,13 @@ Run with four H200 GPUs:
 
 ```bash
 docker run --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
-  -v "$PWD":/workspace/submissions-instructions \
+  -v "$PWD":/workspace/aimo-proof-pilot \
   -v /path/to/olmo_train_assets:/vol/olmo_train_assets \
   -e HF_TOKEN \
   -e WANDB_API_KEY \
   -e WANDB_MODE=online \
   aimo-proof-pilot:cu130 \
-  bash /workspace/submissions-instructions/operator_commands/prime_rl_opd_4xh200_muon_imo_ctx16384_2train_1policy_1teacher.sh
+  bash /workspace/aimo-proof-pilot/operator_commands/prime_rl_opd_4xh200_muon_imo_ctx16384_2train_1policy_1teacher.sh
 ```
 
 ## Singularity / Apptainer
@@ -179,7 +179,7 @@ singularity run --nv container.sif \
   --prime_env_id proof-opd-env
 ```
 
-For the provided OPD shell script, bind this repo to `/workspace/submissions-instructions` and bind a writable model/output volume to `/vol/olmo_train_assets`.
+For the provided OPD shell script, bind this repo to `/workspace/aimo-proof-pilot` and bind a writable model/output volume to `/vol/olmo_train_assets`.
 
 ## Secrets and Artifacts
 

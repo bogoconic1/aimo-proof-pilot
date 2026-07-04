@@ -101,7 +101,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--input",
-        default="submissions-instructions/proofbench_v2.csv",
+        default="aimo-proof-pilot/proofbench_v2.csv",
         help="Input CSV. Defaults to the repository proofbench_v2.csv.",
     )
     parser.add_argument(

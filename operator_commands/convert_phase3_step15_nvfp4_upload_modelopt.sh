@@ -33,7 +33,7 @@ MODEL_PATH="${RUN_ROOT}/olmo3_32b_rl_2gen_1train_long__42__1781876839_checkpoint
 EXPORT_PATH="${RUN_ROOT}/step15-hf-nvfp4"
 DATA_PATH="/groups/gcg51557/experiments/0371_aimo/containers/team1/train_phase2.parquet"
 CALIB_PATH="/tmp/olmo3_rl/data/phase2_modelopt_calib_6144.jsonl"
-SUBMISSIONS_DIR="/tmp/submissions-instructions-runtime"
+SUBMISSIONS_DIR="/tmp/aimo-proof-pilot-runtime"
 export MODEL_OPT_ROOT="/tmp/Model-Optimizer"
 export MODEL_OPT_DIR="${MODEL_OPT_ROOT}/examples/llm_ptq"
 HF_TARGET="checkpoints/imo1959_2024_grpo_step1100hf_long4x8_vllm020_vllm080_cpuadam_5c84b85/cmd_2812a6de5075c2d3/step15-hf-nvfp4"
@@ -49,7 +49,7 @@ if [ -d "${SUBMISSIONS_DIR}/.git" ]; then
 else
   echo "Cloning submissions repo"
   rm -rf "${SUBMISSIONS_DIR}"
-  git clone --depth 1 --branch main https://github.com/nguyen599/submissions-instructions.git "${SUBMISSIONS_DIR}"
+  git clone --depth 1 --branch main https://github.com/nguyen599/aimo-proof-pilot.git "${SUBMISSIONS_DIR}"
 fi
 PREPARE_SCRIPT="${SUBMISSIONS_DIR}/scripts/prepare_modelopt_calib.py"
 [ -f "${PREPARE_SCRIPT}" ] || { echo "ERROR: missing ${PREPARE_SCRIPT}"; exit 5; }

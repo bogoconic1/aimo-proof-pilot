@@ -19,7 +19,7 @@ export PRIME_RL_DION_MUON_MAX_CONCURRENT_TASKS="${PRIME_RL_DION_MUON_MAX_CONCURR
   --backend prime_rl \
   --model_path "${MODEL_PATH}" \
   --tokenizer_path "${MODEL_PATH}" \
-  --dataset_path /workspace/submissions-instructions/test.csv \
+  --dataset_path /workspace/aimo-proof-pilot/test.csv \
   --output_path /vol/olmo_train_assets/output/prime_rl_opd_4x_manual \
   --logdir /vol/olmo_train_assets/logs/prime_rl_opd_4x_manual \
   --max_train_steps "${MAX_TRAIN_STEPS:-10}" \
@@ -49,7 +49,7 @@ export PRIME_RL_DION_MUON_MAX_CONCURRENT_TASKS="${PRIME_RL_DION_MUON_MAX_CONCURR
   --prime_opd_teacher_vllm_max_num_batched_tokens "${PRIME_OPD_TEACHER_VLLM_MAX_NUM_BATCHED_TOKENS:-65536}" \
   --prime_env_id deepseek-math-v2-env \
   --prime_env_name proof_math \
-  --prime_proof_dataset_path /workspace/submissions-instructions/test.csv \
+  --prime_proof_dataset_path /workspace/aimo-proof-pilot/test.csv \
   --prime_proof_judge_backend none \
   --prime_proof_max_examples 3 \
   --prime_batch_size 2 \

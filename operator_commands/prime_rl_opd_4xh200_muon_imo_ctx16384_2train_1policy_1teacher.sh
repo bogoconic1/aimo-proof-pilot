@@ -1,30 +1,64 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUN_NAME="${OLMO_RUN_DIR_NAME:-prime_rl_opd_muon_imo_ctx20480_2train_1policy_1teacher_$(date -u +%Y%m%d_%H%M%S)}"
+RUN_NAME="${OLMO_RUN_DIR_NAME:-prime_rl_opd_muon_imo_mixed_ctx20480_8gpu_3train_3policy_2teacher_$(date -u +%Y%m%d_%H%M%S)}"
 export OLMO_RUN_DIR_NAME="${RUN_NAME}"
 
-MODEL_PATH="${PRIME_OPD_MODEL_PATH:-/vol/olmo_train_assets/models/opd-32b-deploy/opd-32b-deploy}"
-TEACHER_MODEL_PATH="${PRIME_OPD_TEACHER_MODEL_PATH:-${MODEL_PATH}}"
-DATASET_PATH="${PRIME_OPD_DATASET_PATH:-/workspace/submissions-instructions/imo_data_1959_2024.csv}"
-VERIFIABLE_DATASET_PATH="${PRIME_OPD_VERIFIABLE_DATASET_PATH:-/workspace/submissions-instructions/astralbench.csv}"
+MODEL_PATH="${PRIME_OPD_MODEL_PATH:-/vol/olmo_train_assets/models/opd-32b-v33-s150/opd-32b-v33-s150}"
+TEACHER_MODEL_PATH="${PRIME_OPD_TEACHER_MODEL_PATH:-/vol/olmo_train_assets/models/dpsk-v4-flash}"
+DATASET_PATH="${PRIME_OPD_DATASET_PATH:-/tmp/submissions-instructions-runtime/imo_data_1959_2024.csv}"
+VERIFIABLE_DATASET_PATH="${PRIME_OPD_VERIFIABLE_DATASET_PATH:-/tmp/submissions-instructions-runtime/astralbench.csv}"
 VERIFIABLE_FRACTION="${PRIME_OPD_VERIFIABLE_FRACTION:-0.20}"
 VERIFIABLE_MIX_SEED="${PRIME_OPD_VERIFIABLE_MIX_SEED:-34521}"
-PROOF_MAX_EXAMPLES="${PRIME_PROOF_MAX_EXAMPLES:-20}"
+PROOF_MAX_EXAMPLES="${PRIME_PROOF_MAX_EXAMPLES:-0}"
 CTX_LEN="${PRIME_OPD_CTX_LEN:-20480}"
 VLLM_CTX_LEN="${PRIME_OPD_VLLM_MAX_MODEL_LEN:-${PRIME_VLLM_MAX_MODEL_LEN:-40960}}"
 COMPLETION_TOKENS="${PRIME_OPD_COMPLETION_TOKENS:-20480}"
 BATCHED_TOKENS="${PRIME_OPD_BATCHED_TOKENS:-16384}"
-TEACHER_GPU_MEMORY_UTILIZATION="${PRIME_OPD_TEACHER_GPU_MEMORY_UTILIZATION:-0.85}"
+TEACHER_GPU_MEMORY_UTILIZATION="${PRIME_OPD_TEACHER_GPU_MEMORY_UTILIZATION:-0.90}"
 TEACHER_MAX_NUM_SEQS="${PRIME_OPD_TEACHER_MAX_NUM_SEQS:-8}"
-POLICY_GPU_MEMORY_UTILIZATION="${PRIME_OPD_POLICY_GPU_MEMORY_UTILIZATION:-0.95}"
+TEACHER_VLLM_EXTRA="${PRIME_OPD_TEACHER_VLLM_EXTRA:-}"
+TEACHER_USE_DEEP_GEMM="${PRIME_OPD_TEACHER_USE_DEEP_GEMM:-}"
+POLICY_GPU_MEMORY_UTILIZATION="${PRIME_OPD_POLICY_GPU_MEMORY_UTILIZATION:-0.90}"
 POLICY_MAX_NUM_SEQS="${PRIME_OPD_POLICY_MAX_NUM_SEQS:-16}"
-MAX_INFLIGHT_ROLLOUTS="${PRIME_OPD_MAX_INFLIGHT_ROLLOUTS:-8}"
+POLICY_USE_DEEP_GEMM="${PRIME_OPD_POLICY_USE_DEEP_GEMM:-false}"
+MAX_INFLIGHT_ROLLOUTS="${PRIME_OPD_MAX_INFLIGHT_ROLLOUTS:-24}"
+PROOF_NUM_VERIFIERS="${PRIME_PROOF_NUM_VERIFIERS:-4}"
+PROOF_REFINE_REVIEW_N="${PRIME_PROOF_REFINE_REVIEW_N:-2}"
+CHECKPOINT_INTERVAL="${PRIME_CHECKPOINT_INTERVAL:-10}"
+CHECKPOINT_KEEP_LAST="${PRIME_CHECKPOINT_KEEP_LAST:-2}"
+CHECKPOINT_KEEP_INTERVAL="${PRIME_CHECKPOINT_KEEP_INTERVAL:-0}"
 
+TRAIN_GPUS="${PRIME_TRAIN_GPUS:-3}"
+INFER_GPUS="${PRIME_INFER_GPUS:-3}"
+GPUS_PER_NODE="${PRIME_GPUS_PER_NODE:-8}"
+TEACHER_GPU_IDS="${PRIME_OPD_TEACHER_GPU_IDS:-6,7}"
+TEACHER_TP="${PRIME_OPD_TEACHER_TP:-2}"
+TEACHER_DP="${PRIME_OPD_TEACHER_DP:-1}"
+POLICY_TP="${PRIME_VLLM_TP:-1}"
+POLICY_DP="${PRIME_VLLM_DP:-3}"
+TRAINER_CP="${PRIME_TRAINER_CP:-1}"
+BATCH_SIZE="${PRIME_BATCH_SIZE:-2}"
+GROUP_SIZE="${PRIME_GROUP_SIZE:-2}"
+
+if [[ -z "${TEACHER_VLLM_EXTRA}" && "${TEACHER_MODEL_PATH}" == *"/dpsk-v4-flash"* ]]; then
+  TEACHER_VLLM_EXTRA='{"kv_cache_dtype":"fp8"}'
+fi
+if [[ -z "${TEACHER_USE_DEEP_GEMM}" ]]; then
+  TEACHER_USE_DEEP_GEMM="false"
+fi
+
+echo "[prime-opd] run_name=${RUN_NAME}"
 echo "[prime-opd] proof_dataset=${DATASET_PATH}"
 echo "[prime-opd] verifiable_dataset=${VERIFIABLE_DATASET_PATH}"
 echo "[prime-opd] verifiable_fraction=${VERIFIABLE_FRACTION} mix_seed=${VERIFIABLE_MIX_SEED}"
 echo "[prime-opd] max_examples=${PROOF_MAX_EXAMPLES} ctx=${CTX_LEN} rollout_max_completion=${COMPLETION_TOKENS}"
+echo "[prime-opd] gpu_layout train=${TRAIN_GPUS} infer=${INFER_GPUS} teacher=${TEACHER_GPU_IDS} gpus_per_node=${GPUS_PER_NODE}"
+echo "[prime-opd] vllm policy_tp=${POLICY_TP} policy_dp=${POLICY_DP} teacher_tp=${TEACHER_TP} teacher_dp=${TEACHER_DP}"
+echo "[prime-opd] teacher_vllm_extra=${TEACHER_VLLM_EXTRA:-<none>}"
+echo "[prime-opd] vllm_deep_gemm policy=${POLICY_USE_DEEP_GEMM} teacher=${TEACHER_USE_DEEP_GEMM}"
+echo "[prime-opd] proof_num_verifiers=${PROOF_NUM_VERIFIERS} refine_review_n=${PROOF_REFINE_REVIEW_N}"
+echo "[prime-opd] checkpoint_interval=${CHECKPOINT_INTERVAL} checkpoint_keep_last=${CHECKPOINT_KEEP_LAST} checkpoint_keep_interval=${CHECKPOINT_KEEP_INTERVAL}"
 
 /usr/bin/python /app/train.py \
   --fetch-update \
@@ -36,29 +70,33 @@ echo "[prime-opd] max_examples=${PROOF_MAX_EXAMPLES} ctx=${CTX_LEN} rollout_max_
   --model_path "${MODEL_PATH}" \
   --tokenizer_path "${MODEL_PATH}" \
   --dataset_path "${DATASET_PATH}" \
-  --output_path /vol/olmo_train_assets/output/prime_rl_opd_4x_manual \
-  --logdir /vol/olmo_train_assets/logs/prime_rl_opd_4x_manual \
+  --output_path /vol/olmo_train_assets/output/prime_rl_opd_8x_real \
+  --logdir /vol/olmo_train_assets/logs/prime_rl_opd_8x_real \
   --max_train_steps "${MAX_TRAIN_STEPS:-30}" \
   --max_seq_length "${CTX_LEN}" \
   --rollout_max_completion_tokens "${COMPLETION_TOKENS}" \
-  --optimizer muon \
+  --optimizer te_fused_adamw \
   --learning_rate 1e-6 \
   --weight_decay 0.0 \
   --max_grad_norm 1.0 \
+  --prime_checkpoint_interval "${CHECKPOINT_INTERVAL}" \
+  --prime_checkpoint_keep_last "${CHECKPOINT_KEEP_LAST}" \
+  --prime_checkpoint_keep_interval "${CHECKPOINT_KEEP_INTERVAL}" \
   --prime_algorithm opd \
   --prime_opd_teacher_model "${TEACHER_MODEL_PATH}" \
   --prime_opd_start_teacher true \
-  --prime_opd_teacher_gpu_ids 3 \
+  --prime_opd_teacher_gpu_ids "${TEACHER_GPU_IDS}" \
   --prime_opd_teacher_port 8001 \
-  --prime_opd_teacher_vllm_tensor_parallel_size 1 \
-  --prime_opd_teacher_vllm_data_parallel_size 1 \
+  --prime_opd_teacher_vllm_tensor_parallel_size "${TEACHER_TP}" \
+  --prime_opd_teacher_vllm_data_parallel_size "${TEACHER_DP}" \
   --prime_opd_teacher_vllm_max_model_len "${VLLM_CTX_LEN}" \
   --prime_opd_teacher_vllm_dtype bfloat16 \
   --prime_opd_teacher_vllm_enforce_eager false \
-  --prime_opd_teacher_vllm_quantization fp8 \
   --prime_opd_teacher_vllm_gpu_memory_utilization "${TEACHER_GPU_MEMORY_UTILIZATION}" \
+  --prime_opd_teacher_vllm_use_deep_gemm "${TEACHER_USE_DEEP_GEMM}" \
   --prime_opd_teacher_vllm_max_num_seqs "${TEACHER_MAX_NUM_SEQS}" \
   --prime_opd_teacher_vllm_max_num_batched_tokens "${BATCHED_TOKENS}" \
+  --prime_opd_teacher_vllm_extra "${TEACHER_VLLM_EXTRA}" \
   --prime_env_id proof-opd-env \
   --prime_env_name proof_math \
   --prime_proof_dataset_path "${DATASET_PATH}" \
@@ -70,26 +108,29 @@ echo "[prime-opd] max_examples=${PROOF_MAX_EXAMPLES} ctx=${CTX_LEN} rollout_max_
   --prime_proof_solution_column auto \
   --prime_proof_judge_backend none \
   --prime_proof_max_examples "${PROOF_MAX_EXAMPLES}" \
-  --prime_batch_size 2 \
-  --prime_group_size 2 \
+  --prime_proof_num_verifiers "${PROOF_NUM_VERIFIERS}" \
+  --prime_proof_refine_review_n "${PROOF_REFINE_REVIEW_N}" \
+  --prime_batch_size "${BATCH_SIZE}" \
+  --prime_group_size "${GROUP_SIZE}" \
   --prime_max_inflight_rollouts "${MAX_INFLIGHT_ROLLOUTS}" \
-  --prime_train_gpus 2 \
-  --prime_infer_gpus 1 \
-  --prime_gpus_per_node 4 \
+  --prime_train_gpus "${TRAIN_GPUS}" \
+  --prime_infer_gpus "${INFER_GPUS}" \
+  --prime_gpus_per_node "${GPUS_PER_NODE}" \
   --prime_trainer_model_impl custom \
   --prime_trainer_attn olmo3_sink_fa3 \
-  --prime_trainer_context_parallel_size 2 \
+  --prime_trainer_context_parallel_size "${TRAINER_CP}" \
   --prime_trainer_cp_style ulysses \
   --prime_trainer_fsdp_cpu_offload false \
   --prime_trainer_optim_cpu_offload "${PRIME_TRAINER_OPTIM_CPU_OFFLOAD:-false}" \
   --prime_trainer_fp8 "${PRIME_TRAINER_FP8:-true}" \
-  --prime_vllm_tensor_parallel_size 1 \
-  --prime_vllm_data_parallel_size 1 \
+  --prime_vllm_tensor_parallel_size "${POLICY_TP}" \
+  --prime_vllm_data_parallel_size "${POLICY_DP}" \
   --prime_vllm_max_model_len "${VLLM_CTX_LEN}" \
   --prime_vllm_dtype bfloat16 \
   --prime_vllm_enforce_eager false \
   --prime_vllm_quantization fp8 \
   --prime_vllm_gpu_memory_utilization "${POLICY_GPU_MEMORY_UTILIZATION}" \
+  --prime_vllm_use_deep_gemm "${POLICY_USE_DEEP_GEMM}" \
   --prime_vllm_max_num_seqs "${POLICY_MAX_NUM_SEQS}" \
   --prime_vllm_max_num_batched_tokens "${BATCHED_TOKENS}" \
   --prime_vllm_reasoning_parser deepseek_v4 \

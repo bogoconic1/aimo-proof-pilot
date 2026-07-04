@@ -7,7 +7,7 @@ set -euo pipefail
 #   GPU 2-3: frozen teacher vLLM in FP8
 #
 # Run inside the Modal/Singularity training image, or send through operator_client:
-#   python submissions-instructions/scripts/operator_client.py send --file submissions-instructions/operator_commands/verl_opd_4xh200_fp8_testcsv_smoke.sh
+#   python aimo-proof-pilot/scripts/operator_client.py send --file aimo-proof-pilot/operator_commands/verl_opd_4xh200_fp8_testcsv_smoke.sh
 
 STAMP="$(date -u +%Y%m%d_%H%M%S)"
 RUN_NAME="${RUN_NAME:-verl_opd_4x_fp8_testcsv_${STAMP}}"
@@ -23,9 +23,9 @@ if [ ! -f "${MODEL_PATH}/config.json" ] && [ -f "${TEACHER_MODEL_PATH}/config.js
     TOKENIZER_PATH="${MODEL_PATH}"
   fi
 fi
-DATASET_PATH="${DATASET_PATH:-/workspace/submissions-instructions/test.csv}"
-if [ ! -f "${DATASET_PATH}" ] && [ -f /tmp/submissions-instructions-runtime/test.csv ]; then
-  DATASET_PATH="/tmp/submissions-instructions-runtime/test.csv"
+DATASET_PATH="${DATASET_PATH:-/workspace/aimo-proof-pilot/test.csv}"
+if [ ! -f "${DATASET_PATH}" ] && [ -f /tmp/aimo-proof-pilot-runtime/test.csv ]; then
+  DATASET_PATH="/tmp/aimo-proof-pilot-runtime/test.csv"
 fi
 OUTPUT_ROOT="${OUTPUT_ROOT:-/vol/olmo_train_assets/output/verl_opd_4x_fp8}"
 LOG_ROOT="${LOG_ROOT:-/vol/olmo_train_assets/logs/verl_opd_4x_fp8}"

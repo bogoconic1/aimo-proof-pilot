@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Manual Modal 4xH200 Prime-RL run for OLMo3Sink proof RL.
 # Run inside the Modal training image:
-#   bash /workspace/submissions-instructions/operator_commands/modal_prime_rl_4x_h200_olmo3sink_seq81920_seqs16_bt16384.sh
+#   bash /workspace/aimo-proof-pilot/operator_commands/modal_prime_rl_4x_h200_olmo3sink_seq81920_seqs16_bt16384.sh
 #
 # The defaults match the verified launch with one vLLM rollout GPU and three
 # trainer GPUs. Override paths or run shape through environment variables.
@@ -13,7 +13,7 @@ RUN_NAME="${RUN_NAME:-prime_rl_4x_olmo3sink_seq81920_seqs16_bt16384_${STAMP}}"
 
 MODEL_PATH="${MODEL_PATH:-/vol/olmo_train_assets/models/opd-32b-v33-s150/opd-32b-v33-s150}"
 TOKENIZER_PATH="${TOKENIZER_PATH:-${MODEL_PATH}}"
-DATASET_PATH="${DATASET_PATH:-/tmp/submissions-instructions-runtime/imo_data_1959_2024.csv}"
+DATASET_PATH="${DATASET_PATH:-/tmp/aimo-proof-pilot-runtime/imo_data_1959_2024.csv}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/vol/olmo_train_assets/output/prime_rl_4x}"
 LOG_ROOT="${LOG_ROOT:-/vol/olmo_train_assets/logs/prime_rl_4x}"
 

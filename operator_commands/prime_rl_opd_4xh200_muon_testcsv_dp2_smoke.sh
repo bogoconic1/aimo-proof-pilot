@@ -13,7 +13,7 @@ export OLMO_RUN_DIR_NAME="${RUN_NAME}"
   --backend prime_rl \
   --model_path /vol/olmo_train_assets/models/opd-32b-v33-s150/opd-32b-v33-s150 \
   --tokenizer_path /vol/olmo_train_assets/models/opd-32b-v33-s150/opd-32b-v33-s150 \
-  --dataset_path /workspace/submissions-instructions/test.csv \
+  --dataset_path /workspace/aimo-proof-pilot/test.csv \
   --output_path /vol/olmo_train_assets/output/prime_rl_opd_4x_manual \
   --logdir /vol/olmo_train_assets/logs/prime_rl_opd_4x_manual \
   --max_train_steps 1 \
@@ -39,7 +39,7 @@ export OLMO_RUN_DIR_NAME="${RUN_NAME}"
   --prime_opd_teacher_vllm_max_num_batched_tokens 2048 \
   --prime_env_id deepseek-math-v2-env \
   --prime_env_name proof_math \
-  --prime_proof_dataset_path /workspace/submissions-instructions/test.csv \
+  --prime_proof_dataset_path /workspace/aimo-proof-pilot/test.csv \
   --prime_proof_judge_backend none \
   --prime_proof_max_examples 3 \
   --prime_batch_size 2 \

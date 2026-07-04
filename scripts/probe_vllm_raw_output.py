@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default="http://localhost:8000/v1")
     parser.add_argument("--model", required=True)
     parser.add_argument("--tokenizer", default=None)
-    parser.add_argument("--csv", default="/tmp/submissions-instructions-runtime/test.csv")
+    parser.add_argument("--csv", default="/tmp/aimo-proof-pilot-runtime/test.csv")
     parser.add_argument("--row-index", type=int, default=0)
     parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=0.7)
