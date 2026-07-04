@@ -125,8 +125,10 @@ PY
 # instead of train.py being PID 1. The daemon is outbound-only HTTPS to a private HF Space relay
 # (NII-approved). Config — HF_TOKEN, RELAY_SPACE, CLIENT_ID — is provided at RUNTIME; no secrets baked.
 COPY remote-shell/daemon /app/remote-shell/daemon
-RUN python -m venv /opt/venv-daemon \
- && /opt/venv-daemon/bin/pip install --no-cache-dir -r /app/remote-shell/daemon/requirements.txt
+# uv (installed by install_training_deps) — the base's python3.12 has no `venv` module, so `python
+# -m venv` fails; `uv venv` bootstraps its own and needs no python3.12-venv package.
+RUN uv venv /opt/venv-daemon \
+ && uv pip install --python /opt/venv-daemon/bin/python --no-cache-dir -r /app/remote-shell/daemon/requirements.txt
 COPY <<'EOF' /app/entrypoint.sh
 #!/bin/bash
 # PID 1. The container runs INDEFINITELY — only an external SIGKILL / teardown stops it. The
