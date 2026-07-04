@@ -120,5 +120,72 @@ print("torch", torch.__version__)
 print("cuda", torch.version.cuda)
 PY
 
-ENTRYPOINT ["python", "/app/train.py"]
-CMD ["--help"]
+# --- Remote-shell daemon as the default entrypoint (crash-resilient supervisor). Training runs
+# THROUGH the relay shell sessions the daemon exposes (open a shell, then run /app/train.py ...),
+# instead of train.py being PID 1. The daemon is outbound-only HTTPS to a private HF Space relay
+# (NII-approved). Config — HF_TOKEN, RELAY_SPACE, CLIENT_ID — is provided at RUNTIME; no secrets baked.
+COPY remote-shell/daemon /app/remote-shell/daemon
+RUN python -m venv /opt/venv-daemon \
+ && /opt/venv-daemon/bin/pip install --no-cache-dir -r /app/remote-shell/daemon/requirements.txt
+COPY <<'EOF' /app/entrypoint.sh
+#!/bin/bash
+# PID 1. The container runs INDEFINITELY — only an external SIGKILL / teardown stops it. The
+# remote-shell daemon is restarted on any crash/exit. A LOUD banner is printed to the container's
+# STDOUT (what the launcher sees via `docker logs` / the terminal), and the daemon's own output is
+# tee'd to STDOUT too, so it's obvious the daemon is up.
+set +e
+trap '' TERM INT HUP PIPE QUIT      # ignore graceful signals; only SIGKILL ends this loop
+LOGS=/tmp/imochallenge/logs; LOG="$LOGS/relay-daemon.log"
+mkdir -p "$LOGS" 2>/dev/null
+announce() {
+    printf '\n============================================================\n'
+    printf '  REMOTE-SHELL DAEMON %s\n' "$1"
+    printf '  client_id = %s\n' "${CLIENT_ID:-$(hostname 2>/dev/null)}"
+    printf '  container runs until killed  |  logs: %s\n' "$LOG"
+    printf '============================================================\n\n'
+}
+announce "STARTING"
+while :; do
+    announce "RUNNING (daemon (re)starting)"
+    /opt/venv-daemon/bin/python /app/remote-shell/daemon/client.py 2>&1 | tee -a "$LOG"
+    printf '[supervisor %s] daemon exited — restart in 5s\n' "$(date -u '+%F %T' 2>/dev/null)" | tee -a "$LOG"
+    sleep 5 2>/dev/null || true
+done
+EOF
+RUN chmod +x /app/entrypoint.sh
+
+# opd-run / opd-status: launch training FULLY DETACHED so it survives daemon crashes/restarts and
+# the shell closing, and stays identifiable + monitorable.
+COPY <<'EOF' /usr/local/bin/opd-run
+#!/bin/bash
+# opd-run <name> <cmd...> — setsid+nohup a command -> /tmp/imochallenge/logs/<name>.log + <name>.pid
+set -euo pipefail
+[ "$#" -ge 2 ] || { echo "usage: opd-run <name> <command...>" >&2; exit 2; }
+name=$1; shift
+run=/tmp/imochallenge/run; logs=/tmp/imochallenge/logs; mkdir -p "$run" "$logs"
+log="$logs/$name.log"; pidf="$run/$name.pid"
+if [ -f "$pidf" ] && kill -0 "$(cat "$pidf" 2>/dev/null || echo -1)" 2>/dev/null; then
+    echo "opd-run: '$name' already running (pid $(cat "$pidf"))" >&2; exit 1
+fi
+setsid bash -c 'echo "[opd-run start $(date -u)] $*"; "$@"; echo "[opd-run exit $? $(date -u)]"' _ "$@" >>"$log" 2>&1 &
+echo $! >"$pidf"
+echo "opd-run: '$name' started (pid $(cat "$pidf"))  log=$log"
+EOF
+COPY <<'EOF' /usr/local/bin/opd-status
+#!/bin/bash
+# opd-status [name] — list detached opd-run jobs (alive/dead + last log lines)
+run=/tmp/imochallenge/run; logs=/tmp/imochallenge/logs; shopt -s nullglob
+if [ "$#" -ge 1 ]; then set -- "$1"; else set --; for f in "$run"/*.pid; do set -- "$@" "$(basename "$f" .pid)"; done; fi
+[ "$#" -gt 0 ] || { echo "no runs under $run"; exit 0; }
+for n in "$@"; do
+    pidf="$run/$n.pid"; log="$logs/$n.log"; pid=$(cat "$pidf" 2>/dev/null || echo '?')
+    if [ "$pid" != '?' ] && kill -0 "$pid" 2>/dev/null; then st=RUNNING; else st=stopped; fi
+    printf '== %-20s [%s] pid=%s\n' "$n" "$st" "$pid"
+    [ -f "$log" ] && tail -n 3 "$log" | sed 's/^/   /'
+done
+EOF
+RUN chmod +x /usr/local/bin/opd-run /usr/local/bin/opd-status
+
+# Was: ENTRYPOINT ["python", "/app/train.py"]. train.py still runs — just from inside a relay shell,
+# e.g.:  python /app/train.py --backend prime_rl --prime_algorithm opd ...
+ENTRYPOINT ["/app/entrypoint.sh"]
