@@ -113,6 +113,11 @@ From: chankhavu/aimo-proof-pilot:v4
     if ! command -v uv >/dev/null 2>&1; then
         python -m pip install --no-cache-dir --upgrade uv
     fi
+    uv pip install --system --prerelease=allow --no-cache-dir \
+        "verifiers[harbor]>=0.1.15.dev411" \
+        "deep-gemm @ https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_x86_64.whl"
+    uv pip uninstall --system kernels || true
+    uv pip install --system --no-cache-dir --no-deps nvidia-nccl-cu13==2.29.3
     if [ -f /app/remote-shell/daemon/requirements.txt ]; then
         if [ ! -x /opt/venv-daemon/bin/python ]; then
             uv venv /opt/venv-daemon
@@ -197,12 +202,22 @@ EOF
     chmod +x /usr/local/bin/opd-run /usr/local/bin/opd-status
 
 %test
-    python -m py_compile \
-        /app/train.py \
-        /app/train_engine.py \
-        /app/train_engine_rl.py \
-        /app/train_engine_verl.py \
-        /app/proof_opd_env.py
+    set -euo pipefail
+    export PYTHONDONTWRITEBYTECODE=1
+    python - <<'PY'
+import ast
+from pathlib import Path
+
+for path in [
+    "/app/train.py",
+    "/app/train_engine.py",
+    "/app/train_engine_rl.py",
+    "/app/train_engine_verl.py",
+    "/app/proof_opd_env.py",
+]:
+    ast.parse(Path(path).read_text(), filename=path)
+    print(f"{path} syntax OK")
+PY
     python - <<'PY'
 from importlib.metadata import PackageNotFoundError, version
 
