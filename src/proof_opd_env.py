@@ -48,7 +48,6 @@ HEADER_SUFFIX_PATTERN = r"(?:\s*//[^\n]*)?\s*$"
 BOXED_PATTERN = re.compile(r"\\boxed\s*\{([^{}]+)\}")
 DEFAULT_MIX_SEED = 34521
 VERIFIABLE_ANSWER_MATCH_METHOD_IDS = {
-    "not_verifiable": -1.0,
     "missing_prediction": 0.0,
     "missing_gold": 0.0,
     "no_match": 1.0,
@@ -696,7 +695,6 @@ def normalize_dataset_rows(
     for index, raw_row in enumerate(rows):
         row = dict(raw_row)
         problem_key = resolve_column(row, problem_column, ["problem", "question", "Problem", "Question"])
-        answer_key = resolve_column(row, answer_column, ["answer", "final_answer", "gold_answer", "Answer"])
         solution_key = resolve_column(row, solution_column, ["solution", "Solution", "answer", "Answer"])
         problem = cell_to_text(row.get(problem_key)) if problem_key else ""
         if not problem and "messages" in row:
@@ -704,7 +702,12 @@ def normalize_dataset_rows(
         if not problem:
             continue
         solution = cell_to_text(row.get(solution_key)) if solution_key else ""
-        gold_answer = cell_to_text(row.get(answer_key)) if answer_key else ""
+        answer_key = (
+            resolve_column(row, answer_column, ["answer", "final_answer", "gold_answer", "Answer"])
+            if is_verifiable
+            else None
+        )
+        gold_answer = cell_to_text(row.get(answer_key)) if is_verifiable and answer_key else ""
         if is_verifiable and not gold_answer:
             continue
         task_id = str(row.get("task_id") or row.get("id") or row.get("problem_id") or index)
@@ -728,16 +731,17 @@ def normalize_dataset_rows(
                 "task_id": task_id,
                 "source_index": index,
                 "task_type": task_type,
-                "gold_answer": gold_answer,
                 "info": {
                     "stage": "proof_generation",
                     "task_type": task_type,
                     "task_id": task_id,
                     "source_index": index,
-                    "gold_answer": gold_answer,
                 },
             }
         )
+        if is_verifiable:
+            normalized[-1]["gold_answer"] = gold_answer
+            normalized[-1]["info"]["gold_answer"] = gold_answer
         if max_examples is not None and max_examples > 0 and len(normalized) >= max_examples:
             break
     if not normalized:
@@ -772,6 +776,66 @@ def _take_rows(rows: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
     return selected
 
 
+def normalize_boxed_training_rows(
+    rows: list[dict[str, Any]],
+    *,
+    problem_column: str,
+    solution_column: str,
+    answer_column: str = "auto",
+    max_examples: int | None = None,
+    dataset_label: str = "proof_math",
+) -> list[dict[str, Any]]:
+    """Normalize answerable rows for training without preserving answer labels.
+
+    These rows are used only to expose boxed-answer prompting patterns in the
+    train mix. Boxed-answer accuracy belongs to the separate eval environment,
+    so the train rows are plain proof tasks and intentionally omit gold answers.
+    """
+
+    normalized: list[dict[str, Any]] = []
+    for index, raw_row in enumerate(rows):
+        row = dict(raw_row)
+        problem_key = resolve_column(row, problem_column, ["problem", "question", "Problem", "Question"])
+        answer_key = resolve_column(row, answer_column, ["answer", "final_answer", "gold_answer", "Answer"])
+        solution_key = resolve_column(row, solution_column, ["solution", "Solution", "answer", "Answer"])
+        problem = cell_to_text(row.get(problem_key)) if problem_key else ""
+        if not problem and "messages" in row:
+            problem = extract_problem_from_messages(row.get("messages"))
+        if not problem:
+            continue
+        if not answer_key or not cell_to_text(row.get(answer_key)):
+            continue
+        solution = cell_to_text(row.get(solution_key)) if solution_key else ""
+        task_id = str(row.get("task_id") or row.get("id") or row.get("problem_id") or index)
+        answer = {"problem": problem, "task_type": "proof"}
+        if solution:
+            answer["solution"] = solution
+        normalized.append(
+            {
+                "question": build_deepseek_verifiable_generation_prompt(problem),
+                "problem": problem,
+                "solution": solution,
+                "answer": json.dumps(answer, ensure_ascii=False),
+                "dataset": dataset_label,
+                "task_id": task_id,
+                "source_index": index,
+                "task_type": "proof",
+                "info": {
+                    "stage": "proof_generation",
+                    "task_type": "proof",
+                    "task_id": task_id,
+                    "source_index": index,
+                    "boxed_training_prompt": True,
+                },
+            }
+        )
+        if max_examples is not None and max_examples > 0 and len(normalized) >= max_examples:
+            break
+    if not normalized:
+        raise ValueError("Boxed training dataset produced zero usable rows.")
+    return normalized
+
+
 def normalize_mixed_dataset_rows(
     proof_rows: list[dict[str, Any]],
     *,
@@ -795,12 +859,10 @@ def normalize_mixed_dataset_rows(
         count = max_examples if max_examples is not None and max_examples > 0 else len(proof_normalized)
         return [_clone_dataset_row(row) for row in proof_normalized[:count]]
 
-    verifiable_normalized = normalize_dataset_rows(
+    boxed_train_normalized = normalize_boxed_training_rows(
         verifiable_rows,
         problem_column=problem_column,
         solution_column=solution_column,
-        max_examples=None,
-        task_type="verifiable",
         answer_column=verifiable_answer_column,
         dataset_label="proof_math",
     )
@@ -811,7 +873,8 @@ def normalize_mixed_dataset_rows(
         verifiable_count = 1
     verifiable_count = min(final_count, verifiable_count)
     proof_count = final_count - verifiable_count
-    mixed = _take_rows(proof_normalized, proof_count) + _take_rows(verifiable_normalized, verifiable_count)
+    verifiable_train_rows = _take_rows(boxed_train_normalized, verifiable_count)
+    mixed = _take_rows(proof_normalized, proof_count) + verifiable_train_rows
     random.Random(int(mix_seed)).shuffle(mixed)
     return mixed
 
@@ -858,7 +921,6 @@ class ProofOPDEnv(vf.MultiTurnEnv):
         refine_rounds: int = 1,
         num_verifiers: int = 4,
         refine_review_n: int = 2,
-        verifiable_eval_mode: bool = False,
         enable_meta_verification: bool = True,
         partial_format_score: float = 0.7,
         refine_early_stop_reward: float = 0.95,
@@ -868,7 +930,6 @@ class ProofOPDEnv(vf.MultiTurnEnv):
         self.refine_rounds = max(0, int(refine_rounds))
         self.num_verifiers = max(1, int(num_verifiers))
         self.refine_review_n = max(1, int(refine_review_n))
-        self.verifiable_eval_mode = bool(verifiable_eval_mode)
         self.enable_meta_verification = bool(enable_meta_verification)
         self.partial_format_score = clamp01(float(partial_format_score))
         self.refine_early_stop_reward = clamp01(float(refine_early_stop_reward))
@@ -897,36 +958,6 @@ class ProofOPDEnv(vf.MultiTurnEnv):
         info = state.get("input", {}).get("info") if isinstance(state, dict) else None
         info = json_loads_maybe(info)
         return dict(info) if isinstance(info, dict) else {}
-
-    def _attach_eval_answer_metrics(
-        self,
-        state: vf.State,
-        payload: dict[str, Any],
-        generation: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Attach boxed-answer fields only for verifiable eval scoring."""
-        info = self._input_info(state)
-        task_type = str(info.get("task_type") or self._input_value(state, "task_type") or "proof")
-        gold_answer = str(info.get("gold_answer") or self._input_value(state, "gold_answer") or "").strip()
-        is_verifiable = task_type == "verifiable" or bool(gold_answer)
-        payload["task_type"] = "verifiable" if is_verifiable else "proof"
-        payload["gold_answer"] = gold_answer
-        if not is_verifiable:
-            payload["boxed_answer"] = ""
-            payload["boxed_present"] = 0.0
-            payload["verifiable_accuracy"] = -1.0
-            payload["answer_match_method"] = "not_verifiable"
-            payload["answer_match_method_id"] = VERIFIABLE_ANSWER_MATCH_METHOD_IDS["not_verifiable"]
-            return payload
-
-        boxed_answer = extract_verifiable_boxed_answer(str(generation.get("proof") or ""))
-        is_correct, method = check_verifiable_answer(boxed_answer, gold_answer)
-        payload["boxed_answer"] = boxed_answer
-        payload["boxed_present"] = 1.0 if boxed_answer else 0.0
-        payload["verifiable_accuracy"] = 1.0 if is_correct else 0.0
-        payload["answer_match_method"] = method
-        payload["answer_match_method_id"] = VERIFIABLE_ANSWER_MATCH_METHOD_IDS.get(method, 1.0)
-        return payload
 
     def _effective_meta_score(self, result: dict[str, Any]) -> float:
         if not self.enable_meta_verification:
@@ -1002,7 +1033,6 @@ class ProofOPDEnv(vf.MultiTurnEnv):
             "source_index": info.get("source_index") or self._input_value(state, "source_index"),
             "task_type": payload.get("task_type") or info.get("task_type") or self._input_value(state, "task_type"),
             "problem": clipped_trace_text(self._problem(state)),
-            "gold_answer": payload.get("gold_answer") or info.get("gold_answer") or self._input_value(state, "gold_answer"),
             "reward": payload.get("reward", 0.0),
             "format_score": payload.get("format_score", 0.0),
             "format_ok": payload.get("format_ok", False),
@@ -1121,53 +1151,6 @@ class ProofOPDEnv(vf.MultiTurnEnv):
             "self_evaluation": parsed.get("self_evaluation", ""),
         }
 
-    def _generation_eval_payload(
-        self,
-        state: vf.State,
-        parsed: dict[str, Any],
-        round_idx: int,
-        *,
-        is_truncated: bool = False,
-        finish_reason: str = "",
-    ) -> dict[str, Any]:
-        payload = {
-            "round_index": round_idx,
-            "selected_round_index": round_idx,
-            "reward": 0.0,
-            "format_score": self._format_score(parsed),
-            "format_ok": parsed.get("format_ok", False),
-            "proof_score": None,
-            "meta_score": None,
-            "num_verifiers": 0,
-            "num_verifier_results": 0,
-            "valid_verifier_count": 0,
-            "valid_meta_count": 0,
-            "verifier_reward_terms": [],
-            "verifier_meta_reward": 0.0,
-            "verifier_results": [],
-            "self_score": parsed.get("self_score"),
-            "proof_chars": len(str(parsed.get("proof") or "")),
-            "self_evaluation_chars": len(str(parsed.get("self_evaluation") or "")),
-            "verifier_evaluation_chars": 0,
-            "meta_analysis_chars": 0,
-            "closed_thinking": parsed.get("closed_thinking", False),
-            "is_truncated": is_truncated,
-            "finish_reason": finish_reason,
-            "reason": "verifiable_eval_generation_only",
-            "generation_raw_output": parsed.get("raw_output", ""),
-            "proof": parsed.get("proof", ""),
-            "self_evaluation": parsed.get("self_evaluation", ""),
-            "verifier_evaluation": "",
-            "verifier_invalid_reason": "",
-            "meta_analysis": "",
-            "meta_invalid_reason": "",
-            "stage_records": list(state.get("proof_opd_stage_records") or []),
-        }
-        self._attach_eval_answer_metrics(state, payload, parsed)
-        verifiable_accuracy = float(payload.get("verifiable_accuracy", 0.0) or 0.0)
-        payload["reward"] = max(0.0, verifiable_accuracy)
-        return payload
-
     def _record_stage(
         self,
         state: vf.State,
@@ -1258,11 +1241,28 @@ class ProofOPDEnv(vf.MultiTurnEnv):
 
     def _should_refine(self, state: vf.State, payload: dict[str, Any]) -> bool:
         rounds = state.get("proof_opd_rounds") or []
-        if self.verifiable_eval_mode:
-            return len(rounds) <= self.refine_rounds
         if len(rounds) > self.refine_rounds:
             return False
         return float(payload.get("reward", 0.0) or 0.0) < self.refine_early_stop_reward
+
+    def _maybe_attach_invalid_generation_eval_metrics(
+        self,
+        state: vf.State,
+        payload: dict[str, Any],
+        parsed: dict[str, Any],
+    ) -> None:
+        return None
+
+    def _maybe_score_valid_generation_for_eval(
+        self,
+        state: vf.State,
+        parsed: dict[str, Any],
+        round_idx: int,
+        *,
+        is_truncated: bool = False,
+        finish_reason: str = "",
+    ) -> dict[str, Any] | None:
+        return None
 
     def _start_verification_round(self, state: vf.State) -> vf.Messages:
         state["proof_opd_verify_index"] = 0
@@ -1326,20 +1326,19 @@ class ProofOPDEnv(vf.MultiTurnEnv):
                     finish_reason=finish_reason,
                 )
                 payload["stage_records"] = list(state.get("proof_opd_stage_records") or [])
-                if self.verifiable_eval_mode:
-                    self._attach_eval_answer_metrics(state, payload, parsed)
+                self._maybe_attach_invalid_generation_eval_metrics(state, payload, parsed)
                 state.setdefault("proof_opd_rounds", []).append(payload)
                 state["proof_opd_reward_payload"] = payload
                 LOGGER.info("Proof-OPD invalid generation: %s", json.dumps(payload, ensure_ascii=False))
                 return self._stop(state)
-            if self.verifiable_eval_mode and round_idx >= self.refine_rounds:
-                payload = self._generation_eval_payload(
-                    state,
-                    parsed,
-                    round_idx,
-                    is_truncated=is_truncated,
-                    finish_reason=finish_reason,
-                )
+            payload = self._maybe_score_valid_generation_for_eval(
+                state,
+                parsed,
+                round_idx,
+                is_truncated=is_truncated,
+                finish_reason=finish_reason,
+            )
+            if payload is not None:
                 state.setdefault("proof_opd_rounds", []).append(payload)
                 state["proof_opd_reward_payload"] = payload
                 LOGGER.info("Proof-OPD verifiable eval generation scored: %s", json.dumps(payload, ensure_ascii=False)[:4000])
@@ -1484,6 +1483,114 @@ class ProofOPDEnv(vf.MultiTurnEnv):
         state["info"] = info
 
 
+class ProofOPDVerifiableEvalEnv(ProofOPDEnv):
+    """Eval-only env that scores boxed final answers instead of train reward."""
+
+    def _build_wandb_trace(self, state: vf.State) -> dict[str, Any]:
+        trace = super()._build_wandb_trace(state)
+        payload = dict(state.get("proof_opd_reward_payload") or {})
+        info = self._input_info(state)
+        trace.update(
+            {
+                "gold_answer": payload.get("gold_answer")
+                or info.get("gold_answer")
+                or self._input_value(state, "gold_answer"),
+                "boxed_answer": payload.get("boxed_answer", ""),
+                "boxed_present": payload.get("boxed_present", 0.0),
+                "verifiable_accuracy": payload.get("verifiable_accuracy", 0.0),
+                "answer_match_method": payload.get("answer_match_method", ""),
+            }
+        )
+        return trace
+
+    def _attach_answer_metrics(
+        self,
+        state: vf.State,
+        payload: dict[str, Any],
+        generation: dict[str, Any],
+    ) -> dict[str, Any]:
+        info = self._input_info(state)
+        gold_answer = str(info.get("gold_answer") or self._input_value(state, "gold_answer") or "").strip()
+        payload["task_type"] = "verifiable"
+        payload["gold_answer"] = gold_answer
+        if not gold_answer:
+            payload["boxed_answer"] = ""
+            payload["boxed_present"] = 0.0
+            payload["verifiable_accuracy"] = 0.0
+            payload["answer_match_method"] = "missing_gold"
+            payload["answer_match_method_id"] = VERIFIABLE_ANSWER_MATCH_METHOD_IDS["missing_gold"]
+            return payload
+
+        boxed_answer = extract_verifiable_boxed_answer(str(generation.get("proof") or ""))
+        is_correct, method = check_verifiable_answer(boxed_answer, gold_answer)
+        payload["boxed_answer"] = boxed_answer
+        payload["boxed_present"] = 1.0 if boxed_answer else 0.0
+        payload["verifiable_accuracy"] = 1.0 if is_correct else 0.0
+        payload["answer_match_method"] = method
+        payload["answer_match_method_id"] = VERIFIABLE_ANSWER_MATCH_METHOD_IDS.get(method, 1.0)
+        return payload
+
+    def _maybe_attach_invalid_generation_eval_metrics(
+        self,
+        state: vf.State,
+        payload: dict[str, Any],
+        parsed: dict[str, Any],
+    ) -> None:
+        self._attach_answer_metrics(state, payload, parsed)
+
+    def _maybe_score_valid_generation_for_eval(
+        self,
+        state: vf.State,
+        parsed: dict[str, Any],
+        round_idx: int,
+        *,
+        is_truncated: bool = False,
+        finish_reason: str = "",
+    ) -> dict[str, Any] | None:
+        if round_idx < self.refine_rounds:
+            return None
+        payload = {
+            "round_index": round_idx,
+            "selected_round_index": round_idx,
+            "reward": 0.0,
+            "format_score": self._format_score(parsed),
+            "format_ok": parsed.get("format_ok", False),
+            "proof_score": None,
+            "meta_score": None,
+            "num_verifiers": 0,
+            "num_verifier_results": 0,
+            "valid_verifier_count": 0,
+            "valid_meta_count": 0,
+            "verifier_reward_terms": [],
+            "verifier_meta_reward": 0.0,
+            "verifier_results": [],
+            "self_score": parsed.get("self_score"),
+            "proof_chars": len(str(parsed.get("proof") or "")),
+            "self_evaluation_chars": len(str(parsed.get("self_evaluation") or "")),
+            "verifier_evaluation_chars": 0,
+            "meta_analysis_chars": 0,
+            "closed_thinking": parsed.get("closed_thinking", False),
+            "is_truncated": is_truncated,
+            "finish_reason": finish_reason,
+            "reason": "verifiable_eval_generation_only",
+            "generation_raw_output": parsed.get("raw_output", ""),
+            "proof": parsed.get("proof", ""),
+            "self_evaluation": parsed.get("self_evaluation", ""),
+            "verifier_evaluation": "",
+            "verifier_invalid_reason": "",
+            "meta_analysis": "",
+            "meta_invalid_reason": "",
+            "stage_records": list(state.get("proof_opd_stage_records") or []),
+        }
+        self._attach_answer_metrics(state, payload, parsed)
+        payload["reward"] = max(0.0, float(payload.get("verifiable_accuracy", 0.0) or 0.0))
+        return payload
+
+    def _should_refine(self, state: vf.State, payload: dict[str, Any]) -> bool:
+        rounds = state.get("proof_opd_rounds") or []
+        return len(rounds) <= self.refine_rounds
+
+
 def load_environment(
     dataset_path: str,
     problem_column: str = "auto",
@@ -1496,7 +1603,6 @@ def load_environment(
     mix_seed: int = DEFAULT_MIX_SEED,
     enable_meta_verification: bool | str = True,
     num_verifiers: int = 4,
-    verifiable_eval_mode: bool | str = False,
     partial_format_score: float = 0.7,
     require_closed_think: bool | str = True,
     refine_rounds: int = 1,
@@ -1506,7 +1612,8 @@ def load_environment(
 ) -> vf.Environment:
     proof_rows = read_dataset_rows(dataset_path)
     normalized_mode = str(dataset_mode or "mixed").strip().lower()
-    if normalized_mode in {"verifiable", "verifiable_eval", "eval_verifiable"}:
+    use_verifiable_eval = normalized_mode in {"verifiable", "verifiable_eval", "eval_verifiable"}
+    if use_verifiable_eval:
         rows = normalize_dataset_rows(
             proof_rows,
             problem_column=problem_column,
@@ -1516,7 +1623,6 @@ def load_environment(
             answer_column=verifiable_answer_column,
             dataset_label="proof_math_verifiable",
         )
-        verifiable_eval_mode = True if verifiable_eval_mode is False else verifiable_eval_mode
     else:
         verifiable_rows = read_dataset_rows(verifiable_dataset_path) if verifiable_dataset_path else None
         rows = normalize_mixed_dataset_rows(
@@ -1541,7 +1647,8 @@ def load_environment(
         task_counts,
     )
     dataset = Dataset.from_list(rows)
-    return ProofOPDEnv(
+    env_cls = ProofOPDVerifiableEvalEnv if use_verifiable_eval else ProofOPDEnv
+    return env_cls(
         dataset=dataset,
         eval_dataset=dataset,
         rubric=ProofOPDRubric(),
@@ -1549,7 +1656,6 @@ def load_environment(
         refine_rounds=int(refine_rounds),
         num_verifiers=int(num_verifiers),
         refine_review_n=int(refine_review_n),
-        verifiable_eval_mode=parse_bool(verifiable_eval_mode, False),
         enable_meta_verification=parse_bool(enable_meta_verification, True),
         partial_format_score=float(partial_format_score),
         require_closed_think=parse_bool(require_closed_think, True),

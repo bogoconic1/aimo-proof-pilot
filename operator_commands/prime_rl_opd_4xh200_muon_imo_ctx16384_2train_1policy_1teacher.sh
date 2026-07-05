@@ -39,9 +39,13 @@ TEACHER_USE_DEEP_GEMM="${PRIME_OPD_TEACHER_USE_DEEP_GEMM:-}"
 POLICY_GPU_MEMORY_UTILIZATION="${PRIME_OPD_POLICY_GPU_MEMORY_UTILIZATION:-0.90}"
 POLICY_MAX_NUM_SEQS="${PRIME_OPD_POLICY_MAX_NUM_SEQS:-16}"
 POLICY_USE_DEEP_GEMM="${PRIME_OPD_POLICY_USE_DEEP_GEMM:-false}"
+POLICY_ENFORCE_EAGER="${PRIME_VLLM_ENFORCE_EAGER:-false}"
 MAX_INFLIGHT_ROLLOUTS="${PRIME_OPD_MAX_INFLIGHT_ROLLOUTS:-24}"
 PROOF_NUM_VERIFIERS="${PRIME_PROOF_NUM_VERIFIERS:-4}"
+PROOF_ENABLE_META_VERIFICATION="${PRIME_PROOF_ENABLE_META_VERIFICATION:-true}"
+PROOF_REFINE_ROUNDS="${PRIME_PROOF_REFINE_ROUNDS:-0}"
 PROOF_REFINE_REVIEW_N="${PRIME_PROOF_REFINE_REVIEW_N:-2}"
+PROOF_REFINE_EARLY_STOP_REWARD="${PRIME_PROOF_REFINE_EARLY_STOP_REWARD:-0.95}"
 CHECKPOINT_INTERVAL="${PRIME_CHECKPOINT_INTERVAL:-10}"
 CHECKPOINT_KEEP_LAST="${PRIME_CHECKPOINT_KEEP_LAST:-2}"
 CHECKPOINT_KEEP_INTERVAL="${PRIME_CHECKPOINT_KEEP_INTERVAL:-0}"
@@ -53,11 +57,16 @@ GPUS_PER_NODE="${PRIME_GPUS_PER_NODE:-4}"
 TEACHER_GPU_IDS="${PRIME_OPD_TEACHER_GPU_IDS:-3}"
 TEACHER_TP="${PRIME_OPD_TEACHER_TP:-1}"
 TEACHER_DP="${PRIME_OPD_TEACHER_DP:-1}"
+TEACHER_ENFORCE_EAGER="${PRIME_OPD_TEACHER_VLLM_ENFORCE_EAGER:-false}"
 POLICY_TP="${PRIME_VLLM_TP:-1}"
 POLICY_DP="${PRIME_VLLM_DP:-1}"
 TRAINER_CP="${PRIME_TRAINER_CP:-1}"
 BATCH_SIZE="${PRIME_BATCH_SIZE:-2}"
 GROUP_SIZE="${PRIME_GROUP_SIZE:-2}"
+WEIGHT_BROADCAST_TYPE="${PRIME_WEIGHT_BROADCAST_TYPE:-filesystem}"
+WEIGHT_BROADCAST_PORT="${PRIME_WEIGHT_BROADCAST_PORT:-29501}"
+WEIGHT_BROADCAST_TIMEOUT="${PRIME_WEIGHT_BROADCAST_TIMEOUT:-3600}"
+WEIGHT_BROADCAST_QUANTIZE="${PRIME_WEIGHT_BROADCAST_QUANTIZE:-false}"
 
 if [[ -z "${TEACHER_VLLM_EXTRA}" && "${TEACHER_MODEL_PATH}" == *"/dpsk-v4-flash"* ]]; then
   TEACHER_VLLM_EXTRA='{"kv_cache_dtype":"fp8"}'
@@ -75,9 +84,11 @@ echo "[prime-opd] eval_interval=${EVAL_INTERVAL} eval_examples=${EVAL_NUM_EXAMPL
 echo "[prime-opd] max_examples=${PROOF_MAX_EXAMPLES} ctx=${CTX_LEN} rollout_max_completion=${COMPLETION_TOKENS}"
 echo "[prime-opd] gpu_layout train=${TRAIN_GPUS} infer=${INFER_GPUS} teacher=${TEACHER_GPU_IDS} gpus_per_node=${GPUS_PER_NODE}"
 echo "[prime-opd] vllm policy_tp=${POLICY_TP} policy_dp=${POLICY_DP} teacher_tp=${TEACHER_TP} teacher_dp=${TEACHER_DP}"
+echo "[prime-opd] weight_broadcast type=${WEIGHT_BROADCAST_TYPE} port=${WEIGHT_BROADCAST_PORT} timeout=${WEIGHT_BROADCAST_TIMEOUT} quantize=${WEIGHT_BROADCAST_QUANTIZE}"
+echo "[prime-opd] vllm_enforce_eager policy=${POLICY_ENFORCE_EAGER} teacher=${TEACHER_ENFORCE_EAGER}"
 echo "[prime-opd] teacher_vllm_extra=${TEACHER_VLLM_EXTRA:-<none>}"
 echo "[prime-opd] vllm_deep_gemm policy=${POLICY_USE_DEEP_GEMM} teacher=${TEACHER_USE_DEEP_GEMM}"
-echo "[prime-opd] proof_num_verifiers=${PROOF_NUM_VERIFIERS} refine_review_n=${PROOF_REFINE_REVIEW_N}"
+echo "[prime-opd] proof_num_verifiers=${PROOF_NUM_VERIFIERS} meta=${PROOF_ENABLE_META_VERIFICATION} refine_rounds=${PROOF_REFINE_ROUNDS} refine_review_n=${PROOF_REFINE_REVIEW_N} refine_early_stop_reward=${PROOF_REFINE_EARLY_STOP_REWARD}"
 echo "[prime-opd] checkpoint_interval=${CHECKPOINT_INTERVAL} checkpoint_keep_last=${CHECKPOINT_KEEP_LAST} checkpoint_keep_interval=${CHECKPOINT_KEEP_INTERVAL} checkpoint_weights_only=${CHECKPOINT_WEIGHTS_ONLY}"
 
 /usr/bin/python /app/train.py \
@@ -112,7 +123,7 @@ echo "[prime-opd] checkpoint_interval=${CHECKPOINT_INTERVAL} checkpoint_keep_las
   --prime_opd_teacher_vllm_data_parallel_size "${TEACHER_DP}" \
   --prime_opd_teacher_vllm_max_model_len "${VLLM_CTX_LEN}" \
   --prime_opd_teacher_vllm_dtype bfloat16 \
-  --prime_opd_teacher_vllm_enforce_eager false \
+  --prime_opd_teacher_vllm_enforce_eager "${TEACHER_ENFORCE_EAGER}" \
   --prime_opd_teacher_vllm_gpu_memory_utilization "${TEACHER_GPU_MEMORY_UTILIZATION}" \
   --prime_opd_teacher_vllm_use_deep_gemm "${TEACHER_USE_DEEP_GEMM}" \
   --prime_opd_teacher_vllm_max_num_seqs "${TEACHER_MAX_NUM_SEQS}" \
@@ -129,8 +140,11 @@ echo "[prime-opd] checkpoint_interval=${CHECKPOINT_INTERVAL} checkpoint_keep_las
   --prime_proof_solution_column auto \
   --prime_proof_judge_backend none \
   --prime_proof_max_examples "${PROOF_MAX_EXAMPLES}" \
+  --prime_proof_enable_meta_verification "${PROOF_ENABLE_META_VERIFICATION}" \
   --prime_proof_num_verifiers "${PROOF_NUM_VERIFIERS}" \
+  --prime_proof_refine_rounds "${PROOF_REFINE_ROUNDS}" \
   --prime_proof_refine_review_n "${PROOF_REFINE_REVIEW_N}" \
+  --prime_proof_refine_early_stop_reward "${PROOF_REFINE_EARLY_STOP_REWARD}" \
   --prime_eval_verifiable_dataset_path "${EVAL_VERIFIABLE_DATASET_PATH}" \
   --prime_eval_interval "${EVAL_INTERVAL}" \
   --prime_eval_num_examples "${EVAL_NUM_EXAMPLES}" \
@@ -153,11 +167,15 @@ echo "[prime-opd] checkpoint_interval=${CHECKPOINT_INTERVAL} checkpoint_keep_las
   --prime_trainer_fsdp_cpu_offload false \
   --prime_trainer_optim_cpu_offload "${PRIME_TRAINER_OPTIM_CPU_OFFLOAD:-false}" \
   --prime_trainer_fp8 "${PRIME_TRAINER_FP8:-true}" \
+  --prime_weight_broadcast_type "${WEIGHT_BROADCAST_TYPE}" \
+  --prime_weight_broadcast_port "${WEIGHT_BROADCAST_PORT}" \
+  --prime_weight_broadcast_timeout "${WEIGHT_BROADCAST_TIMEOUT}" \
+  --prime_weight_broadcast_quantize_in_weight_transfer "${WEIGHT_BROADCAST_QUANTIZE}" \
   --prime_vllm_tensor_parallel_size "${POLICY_TP}" \
   --prime_vllm_data_parallel_size "${POLICY_DP}" \
   --prime_vllm_max_model_len "${VLLM_CTX_LEN}" \
   --prime_vllm_dtype bfloat16 \
-  --prime_vllm_enforce_eager false \
+  --prime_vllm_enforce_eager "${POLICY_ENFORCE_EAGER}" \
   --prime_vllm_quantization fp8 \
   --prime_vllm_gpu_memory_utilization "${POLICY_GPU_MEMORY_UTILIZATION}" \
   --prime_vllm_use_deep_gemm "${POLICY_USE_DEEP_GEMM}" \

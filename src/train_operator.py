@@ -33,6 +33,8 @@ WRAPPER_HANDOFF_ENV_KEYS = (
     "TRAIN_WRAPPER_PREPARED_OLMO_CORE_DIR",
 )
 
+os.environ["GPG_TTY"] = "/dev/stdout"
+os.environ["GNUPGHOME"] = os.path.expanduser("~/.gnupg")
 
 class GitPushConflict(RuntimeError):
     pass

@@ -79,9 +79,9 @@ Pass these through `vf-eval -a '{...}'`.
 | `problem_column` | str | `auto` | Problem column override. |
 | `solution_column` | str | `auto` | Optional solution column override. |
 | `max_examples` | int | `null` | Limit loaded examples before mixing. |
-| `verifiable_dataset_path` | str | `null` | Optional boxed-answer dataset. |
-| `verifiable_fraction` | float | `0.2` | Fraction of final rows drawn from verifiable data. |
-| `verifiable_answer_column` | str | `auto` | Gold answer column override. |
+| `verifiable_dataset_path` | str | `null` | Optional answerable dataset used only to add boxed-answer prompts to training. |
+| `verifiable_fraction` | float | `0.2` | Fraction of final train rows drawn from the answerable dataset. |
+| `verifiable_answer_column` | str | `auto` | Answer column used to filter usable train rows and to score eval rows. |
 | `mix_seed` | int | `34521` | Shuffle seed for mixed datasets. |
 | `enable_meta_verification` | bool | `true` | Run meta-verifier after valid verifier output. |
 | `num_verifiers` | int | `4` | Number of verifier samples per proof. |
@@ -111,7 +111,7 @@ vf-eval proof_opd_env \
 | `proof_opd_meta_score` | Average effective meta-verifier score. |
 | `proof_opd_round_index` | Selected/best round index. |
 
-Boxed-answer accuracy is intentionally not emitted as a train metric. Track it with a separate verifiable eval dataset instead.
+Boxed-answer accuracy is intentionally not emitted as a train metric. Mixed answerable train rows are logged as ordinary proof tasks; track accuracy with a separate verifiable eval dataset instead.
 
 ## Saved Completion Trace
 

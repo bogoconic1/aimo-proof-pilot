@@ -55,7 +55,7 @@ Default topology:
 Default data mix:
 
 - `imo_data_1959_2024.csv` supplies proof-only tasks.
-- `astralbench.csv` supplies verifiable tasks mixed into training.
+- `astralbench.csv` supplies answerable tasks mixed into training with a boxed-answer prompt.
 - `aime_2026.csv` supplies the separate verifiable eval set.
 - `PRIME_OPD_VERIFIABLE_DATASET_PATH` selects the training-mix verifiable CSV, defaulting to `/tmp/aimo-proof-pilot-runtime/astralbench.csv` in the packaged launch script.
 - `PRIME_OPD_EVAL_VERIFIABLE_DATASET_PATH` selects the eval CSV, defaulting to `/tmp/aimo-proof-pilot-runtime/aime_2026.csv`.
@@ -96,9 +96,9 @@ Dataset workflow:
 1. Load the proof dataset from `--prime_proof_dataset_path`.
 2. Load the optional verifiable dataset from `--prime_proof_verifiable_dataset_path`.
 3. Normalize proof rows into `task_type=proof` examples using `question`, `problem`, or the first user message.
-4. Normalize verifiable rows into `task_type=verifiable` examples using `problem`/`question` plus `answer`.
+4. Normalize answerable rows as ordinary `task_type=proof` training examples, but add the boxed-answer instruction to their proof-generation prompt.
 5. Mix rows deterministically with `--prime_proof_verifiable_fraction` and `--prime_proof_mix_seed`. If the verifiable file is small, rows are repeated to preserve the requested fraction.
-6. Store task metadata in each row's `info` field, including `task_type`, `task_id`, `source_index`, and `gold_answer` for verifiable rows.
+6. Store only training-safe metadata in each row's `info` field. Gold answers are not kept in train rows; boxed-answer accuracy is measured only by the separate eval dataset.
 
 Runtime workflow:
 

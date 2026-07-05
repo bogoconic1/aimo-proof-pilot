@@ -126,6 +126,8 @@ def write_prime_rl_config(path: Path, config: dict[str, Any]) -> None:
     write_toml_lines(lines, "deployment", config["deployment"])
     write_toml_lines(lines, "model", config["model"])
     write_toml_lines(lines, "tokenizer", config["tokenizer"])
+    if config.get("weight_broadcast"):
+        write_toml_lines(lines, "weight_broadcast", config["weight_broadcast"])
     if config.get("wandb"):
         write_toml_lines(lines, "wandb", config["wandb"])
     write_toml_lines(lines, "trainer.model", config["trainer_model"])
@@ -324,7 +326,6 @@ def build_prime_eval_config(args: argparse.Namespace) -> tuple[dict[str, Any] | 
                 "problem_column": args.prime_eval_problem_column,
                 "solution_column": args.prime_eval_solution_column,
                 "verifiable_answer_column": args.prime_eval_answer_column,
-                "verifiable_eval_mode": True,
                 "enable_meta_verification": args.prime_eval_enable_meta_verification,
                 "num_verifiers": args.prime_eval_num_verifiers,
                 "partial_format_score": args.prime_proof_partial_format_score,
@@ -353,6 +354,18 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
         vllm_extra["max_num_seqs"] = args.prime_vllm_max_num_seqs
     if args.prime_vllm_max_num_batched_tokens is not None:
         vllm_extra["max_num_batched_tokens"] = args.prime_vllm_max_num_batched_tokens
+
+    weight_broadcast: dict[str, Any] = {
+        "type": args.prime_weight_broadcast_type,
+    }
+    if args.prime_weight_broadcast_type == "nccl":
+        weight_broadcast.update(
+            {
+                "port": args.prime_weight_broadcast_port,
+                "timeout": args.prime_weight_broadcast_timeout,
+                "quantize_in_weight_transfer": args.prime_weight_broadcast_quantize_in_weight_transfer,
+            }
+        )
 
     wandb_config: dict[str, Any] | None = None
     if args.with_tracking and args.wandb_mode != "disabled":
@@ -472,6 +485,7 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
             "name": args.tokenizer_path or args.model_path,
             "trust_remote_code": True,
         },
+        "weight_broadcast": weight_broadcast,
         "wandb": wandb_config,
         "trainer_model": {
             "name": args.model_path,
@@ -858,6 +872,26 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--prime_oversampling_factor", type=float, default=None)
     parser.add_argument("--prime_disable_zero_advantage_filter", type=parse_bool, default=False)
     parser.add_argument("--prime_skip_model_check", type=parse_bool, default=True)
+    parser.add_argument(
+        "--prime_weight_broadcast_type",
+        default="filesystem",
+        choices=("filesystem", "nccl"),
+        help=(
+            "Prime-RL policy weight-transfer backend. Use 'nccl' to broadcast trainer "
+            "weights directly to vLLM workers instead of writing filesystem snapshots."
+        ),
+    )
+    parser.add_argument("--prime_weight_broadcast_port", type=int, default=29501)
+    parser.add_argument("--prime_weight_broadcast_timeout", type=int, default=3600)
+    parser.add_argument(
+        "--prime_weight_broadcast_quantize_in_weight_transfer",
+        type=parse_bool,
+        default=False,
+        help=(
+            "Use Prime-RL's quantized NCCL weight-transfer path. Requires "
+            "--prime_weight_broadcast_type nccl and custom trainer model support."
+        ),
+    )
     parser.add_argument("--prime_temperature", type=float, default=0.7)
     parser.add_argument("--prime_top_p", type=float, default=0.95)
     parser.add_argument("--prime_sampling_extra_body", default=None)
