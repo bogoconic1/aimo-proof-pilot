@@ -144,10 +144,17 @@ def github_git_env() -> dict[str, str]:
     token = env.get("GITHUB_TOKEN", "").strip()
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_LFS_SKIP_SMUDGE"] = "1"
+    env.pop("GPG_TTY", None)
+    git_config_entries = [
+        ("commit.gpgsign", "false"),
+        ("tag.gpgsign", "false"),
+    ]
     if token:
-        env["GIT_CONFIG_COUNT"] = "1"
-        env["GIT_CONFIG_KEY_0"] = f"url.https://{token}@github.com/.insteadOf"
-        env["GIT_CONFIG_VALUE_0"] = "https://github.com/"
+        git_config_entries.append((f"url.https://{token}@github.com/.insteadOf", "https://github.com/"))
+    env["GIT_CONFIG_COUNT"] = str(len(git_config_entries))
+    for idx, (key, value) in enumerate(git_config_entries):
+        env[f"GIT_CONFIG_KEY_{idx}"] = key
+        env[f"GIT_CONFIG_VALUE_{idx}"] = value
     return env
 
 
