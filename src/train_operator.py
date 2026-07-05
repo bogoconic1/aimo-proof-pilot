@@ -17,6 +17,7 @@ import tempfile
 import threading
 import time
 import traceback
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +41,10 @@ os.environ.pop("GPG_TTY", None)
 os.environ["GIT_CONFIG_COUNT"] = "1"
 os.environ["GIT_CONFIG_KEY_0"] = "commit.gpgsign"
 os.environ["GIT_CONFIG_VALUE_0"] = "false"
+
+GITHUB_GIT_LOCKS_GUARD = threading.Lock()
+GITHUB_GIT_LOCKS: dict[str, threading.RLock] = {}
+
 
 class GitPushConflict(RuntimeError):
     pass
@@ -186,6 +191,22 @@ def operator_github_git_dir(args: argparse.Namespace, repo: str) -> Path:
     return Path(args.operator_work_dir).expanduser() / f"node{node_label}" / "github_git" / f"{repo_slug}_pid{os.getpid()}"
 
 
+def github_git_lock(args: argparse.Namespace, repo: str, branch: str) -> threading.RLock:
+    key = f"{operator_node_label(args)}:{repo}:{branch}:{os.getpid()}"
+    with GITHUB_GIT_LOCKS_GUARD:
+        lock = GITHUB_GIT_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            GITHUB_GIT_LOCKS[key] = lock
+        return lock
+
+
+@contextmanager
+def locked_github_git_repo(args: argparse.Namespace, repo: str, branch: str):
+    with github_git_lock(args, repo, branch):
+        yield
+
+
 def ensure_github_git_repo(args: argparse.Namespace, repo: str, branch: str) -> Path:
     repo_dir = operator_github_git_dir(args, repo)
     repo_url = f"https://github.com/{repo}.git"
@@ -198,9 +219,11 @@ def ensure_github_git_repo(args: argparse.Namespace, repo: str, branch: str) -> 
         run_github_git(["clone", "--depth", "1", "--branch", branch, repo_url, str(repo_dir)])
         run_github_git(["config", "user.email", "operator@local"], cwd=repo_dir)
         run_github_git(["config", "user.name", "operator"], cwd=repo_dir)
+        run_github_git(["config", "commit.gpgsign", "false"], cwd=repo_dir)
         return repo_dir
     try:
         run_github_git(["remote", "set-url", "origin", repo_url], cwd=repo_dir)
+        run_github_git(["config", "commit.gpgsign", "false"], cwd=repo_dir)
         run_github_git(["reset", "--hard"], cwd=repo_dir)
         run_github_git(["clean", "-fd"], cwd=repo_dir)
         run_github_git(["fetch", "--depth", "1", "origin", branch], cwd=repo_dir)
@@ -213,19 +236,21 @@ def ensure_github_git_repo(args: argparse.Namespace, repo: str, branch: str) -> 
         run_github_git(["clone", "--depth", "1", "--branch", branch, repo_url, str(repo_dir)])
         run_github_git(["config", "user.email", "operator@local"], cwd=repo_dir)
         run_github_git(["config", "user.name", "operator"], cwd=repo_dir)
+        run_github_git(["config", "commit.gpgsign", "false"], cwd=repo_dir)
     return repo_dir
 
 
 def force_sync_github_git_repo(args: argparse.Namespace, repo: str, branch: str, reason: str) -> None:
-    repo_dir = operator_github_git_dir(args, repo)
-    logging.warning(
-        "Force-syncing operator Git repo %s at %s after failure: %s",
-        repo,
-        repo_dir,
-        reason,
-    )
-    shutil.rmtree(repo_dir, ignore_errors=True)
-    ensure_github_git_repo(args, repo, branch)
+    with locked_github_git_repo(args, repo, branch):
+        repo_dir = operator_github_git_dir(args, repo)
+        logging.warning(
+            "Force-syncing operator Git repo %s at %s after failure: %s",
+            repo,
+            repo_dir,
+            reason,
+        )
+        shutil.rmtree(repo_dir, ignore_errors=True)
+        ensure_github_git_repo(args, repo, branch)
 
 
 def force_sync_operator_github_repos(args: argparse.Namespace, reason: str) -> None:
@@ -243,11 +268,12 @@ def force_sync_operator_github_repos(args: argparse.Namespace, reason: str) -> N
 
 
 def download_github_git_text(args: argparse.Namespace, repo: str, path_in_repo: str, branch: str) -> str:
-    repo_dir = ensure_github_git_repo(args, repo, branch)
-    path = repo_dir / path_in_repo
-    if not path.is_file():
-        raise FileNotFoundError(f"{repo}/{path_in_repo} not found in git worktree")
-    return path.read_text(encoding="utf-8", errors="replace")
+    with locked_github_git_repo(args, repo, branch):
+        repo_dir = ensure_github_git_repo(args, repo, branch)
+        path = repo_dir / path_in_repo
+        if not path.is_file():
+            raise FileNotFoundError(f"{repo}/{path_in_repo} not found in git worktree")
+        return path.read_text(encoding="utf-8", errors="replace")
 
 
 def upload_github_git_file(
@@ -260,42 +286,44 @@ def upload_github_git_file(
     max_attempts: int = 1,
 ) -> None:
     last_error: BaseException | None = None
-    for attempt in range(1, max_attempts + 1):
-        repo_dir = ensure_github_git_repo(args, repo, branch)
-        target = repo_dir / path_in_repo
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(local_path.read_bytes())
-        run_github_git(["add", path_in_repo], cwd=repo_dir)
-        try:
-            run_github_git(["diff", "--cached", "--quiet"], cwd=repo_dir)
-            return
-        except Exception:
-            pass
-        try:
-            run_github_git(["commit", "-m", message], cwd=repo_dir)
-        except RuntimeError as exc:
-            if "nothing to commit" not in str(exc).lower():
-                raise
-            logging.warning(
-                "Git commit reported nothing to commit for %s/%s; attempting push anyway.",
-                repo,
-                path_in_repo,
-            )
-        try:
-            run_github_git(["push", "origin", branch], cwd=repo_dir)
-            return
-        except Exception as exc:
-            last_error = exc
-            if attempt >= max_attempts:
-                raise GitPushConflict(str(exc)) from exc
-            logging.warning(
-                "Git push conflict for %s/%s; refreshing worktree and retrying (%d/%d).",
-                repo,
-                path_in_repo,
-                attempt,
-                max_attempts,
-            )
-            time.sleep(min(2.0, 0.25 * attempt))
+    with locked_github_git_repo(args, repo, branch):
+        for attempt in range(1, max_attempts + 1):
+            repo_dir = ensure_github_git_repo(args, repo, branch)
+            target = repo_dir / path_in_repo
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(local_path.read_bytes())
+            run_github_git(["add", path_in_repo], cwd=repo_dir)
+            try:
+                run_github_git(["diff", "--cached", "--quiet"], cwd=repo_dir)
+                return
+            except Exception:
+                pass
+            try:
+                run_github_git(["commit", "-m", message], cwd=repo_dir)
+            except RuntimeError as exc:
+                if "nothing to commit" not in str(exc).lower():
+                    raise
+                logging.warning(
+                    "Git commit reported nothing to commit for %s/%s; attempting push anyway.",
+                    repo,
+                    path_in_repo,
+                )
+            try:
+                run_github_git(["push", "origin", branch], cwd=repo_dir)
+                return
+            except Exception as exc:
+                last_error = exc
+                if attempt >= max_attempts:
+                    raise GitPushConflict(str(exc)) from exc
+                logging.warning(
+                    "Git push conflict for %s/%s; refreshing worktree and retrying (%d/%d).",
+                    repo,
+                    path_in_repo,
+                    attempt,
+                    max_attempts,
+                )
+                shutil.rmtree(repo_dir, ignore_errors=True)
+                time.sleep(min(2.0, 0.25 * attempt))
     raise GitPushConflict(f"Git upload failed after {max_attempts} attempts: {last_error}")
 
 
