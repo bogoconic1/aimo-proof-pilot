@@ -10,11 +10,11 @@ Large model weights, checkpoints, caches, `.sif` files, W&B runs, and private cr
 |---|---|
 | `src/train.py` | Training wrapper used inside Docker/Singularity. It can fetch runtime updates and dispatch to SFT, Prime-RL, VERL, or operator mode. |
 | `src/train_engine_rl.py` | Prime-RL launcher and config writer for OLMo3Sink / OPD training. |
-| `src/proof_opd_env.py` | Current OPD environment: proof generation, verifier, meta-verifier, optional refinement, and verifiable-answer metrics. |
+| `src/proof_opd_env.py` | Current OPD environment: proof generation, verifier, meta-verifier, optional refinement, and eval-only boxed-answer scoring. |
 | `src/olmo3_sink/` | OLMo3Sink model, vLLM adapter, FA3 sink attention, and conversion helpers. |
 | `operator_commands/` | Reproducible launch scripts for Modal or cluster/container runs. |
 | `imo_data_1959_2024.csv` | Proof-style IMO data with `question` and `solution` columns. |
-| `astralbench.csv` | Verifiable answer data with `problem` and `answer` columns, mixed into OPD training for boxed-answer accuracy tracking. |
+| `astralbench.csv` | Verifiable answer data with `problem` and `answer` columns, mixed into OPD training and usable as an eval set for boxed-answer accuracy tracking. |
 | `Dockerfile` | CUDA 13 / Torch 2.11 image definition for Prime-RL and VERL experiments. |
 | `*.def`, `scripts/build_sif_and_upload.sh` | Singularity/Apptainer build files and helpers. |
 
@@ -110,7 +110,7 @@ Runtime workflow:
 6. Compute `reward = format_score * verifier_score * meta_score`, clamped to `[0, 1]`.
 7. Optionally run a refinement round when the selected reward is below `--prime_proof_refine_early_stop_reward`.
 
-For verifiable tasks, the proof-generation prompt additionally asks the model to include one final answer in `\boxed{...}` inside the `## Solution` section. The boxed answer is used only for metrics; the OPD proof/verifier/meta reward path stays unchanged.
+For verifiable training rows, the proof-generation prompt additionally asks the model to include one final answer in `\boxed{...}` inside the `## Solution` section. Train-time OPD reward still comes only from the proof/verifier/meta path. Boxed-answer accuracy is tracked through the separate eval dataset instead of the mixed train data.
 
 Verifier and meta-verifier calls are local model calls in this OPD setup, not OpenRouter/API calls. `--prime_proof_judge_backend none` is expected for the current command.
 
@@ -118,7 +118,7 @@ Invalid-output behavior:
 
 - If proof generation reaches the token limit or omits a closed thinking block, verifier/meta stages are skipped.
 - If verifier output is invalid or reaches the token limit, meta verification is skipped and the proof score falls back to zero.
-- For verifiable rows, boxed-answer accuracy is still reported when a boxed answer can be extracted from a valid solution section; otherwise it reports `0`.
+- For train rows, invalid proof generation still stops the trace and assigns zero proof reward. Boxed-answer correctness is not logged from train data.
 
 Important W&B metrics:
 
@@ -126,9 +126,7 @@ Important W&B metrics:
 - `proof_opd_format_score`: format compliance score.
 - `proof_opd_proof_score`: verifier score.
 - `proof_opd_meta_score`: meta-verifier score.
-- `proof_opd_task_is_verifiable`: `1` for AstralBench-style rows, `0` for proof-only rows.
-- `proof_opd_verifiable_accuracy`: `1` if the boxed answer matches, `0` if wrong or missing, `-1` for proof-only rows.
-- `proof_opd_boxed_present`: whether a boxed answer was found in the solution section.
+- Eval runs on the configured verifiable eval dataset report boxed-answer accuracy through eval reward / eval sample rows.
 
 ## Data Formats
 

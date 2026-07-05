@@ -110,10 +110,8 @@ vf-eval proof_opd_env \
 | `proof_opd_proof_score` | Average verifier score. |
 | `proof_opd_meta_score` | Average effective meta-verifier score. |
 | `proof_opd_round_index` | Selected/best round index. |
-| `proof_opd_task_is_verifiable` | `1` for boxed-answer rows, `0` for proof-only rows. |
-| `proof_opd_verifiable_accuracy` | `1` correct, `0` wrong, `-1` not verifiable. |
-| `proof_opd_boxed_present` | Whether a boxed answer was found for verifiable rows. |
-| `proof_opd_answer_match_method` | Numeric match method id for boxed-answer checks. |
+
+Boxed-answer accuracy is intentionally not emitted as a train metric. Track it with a separate verifiable eval dataset instead.
 
 ## Saved Completion Trace
 
@@ -150,4 +148,3 @@ For local syntax checks:
 ```bash
 python3.11 -m py_compile proof_opd_env.py
 ```
-

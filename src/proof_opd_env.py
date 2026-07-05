@@ -824,10 +824,6 @@ class ProofOPDRubric(vf.Rubric):
         self.add_metric(self.proof_opd_proof_score)
         self.add_metric(self.proof_opd_meta_score)
         self.add_metric(self.proof_opd_round_index)
-        self.add_metric(self.proof_opd_task_is_verifiable)
-        self.add_metric(self.proof_opd_verifiable_accuracy)
-        self.add_metric(self.proof_opd_boxed_present)
-        self.add_metric(self.proof_opd_answer_match_method)
 
     async def proof_opd_reward(self, state: Any, **_: Any) -> float:
         payload = state.get("proof_opd_reward_payload") if isinstance(state, dict) else None
@@ -844,18 +840,6 @@ class ProofOPDRubric(vf.Rubric):
 
     async def proof_opd_round_index(self, state: Any, **_: Any) -> float:
         return self._metric(state, "selected_round_index", -1.0)
-
-    async def proof_opd_task_is_verifiable(self, state: Any, **_: Any) -> float:
-        return self._metric(state, "task_is_verifiable", 0.0)
-
-    async def proof_opd_verifiable_accuracy(self, state: Any, **_: Any) -> float:
-        return self._metric(state, "verifiable_accuracy", -1.0)
-
-    async def proof_opd_boxed_present(self, state: Any, **_: Any) -> float:
-        return self._metric(state, "boxed_present", 0.0)
-
-    async def proof_opd_answer_match_method(self, state: Any, **_: Any) -> float:
-        return self._metric(state, "answer_match_method_id", VERIFIABLE_ANSWER_MATCH_METHOD_IDS["not_verifiable"])
 
     @staticmethod
     def _metric(state: Any, key: str, default: float = 0.0) -> float:
@@ -914,18 +898,18 @@ class ProofOPDEnv(vf.MultiTurnEnv):
         info = json_loads_maybe(info)
         return dict(info) if isinstance(info, dict) else {}
 
-    def _attach_verifiable_metrics(
+    def _attach_eval_answer_metrics(
         self,
         state: vf.State,
         payload: dict[str, Any],
         generation: dict[str, Any],
     ) -> dict[str, Any]:
+        """Attach boxed-answer fields only for verifiable eval scoring."""
         info = self._input_info(state)
         task_type = str(info.get("task_type") or self._input_value(state, "task_type") or "proof")
         gold_answer = str(info.get("gold_answer") or self._input_value(state, "gold_answer") or "").strip()
         is_verifiable = task_type == "verifiable" or bool(gold_answer)
         payload["task_type"] = "verifiable" if is_verifiable else "proof"
-        payload["task_is_verifiable"] = 1.0 if is_verifiable else 0.0
         payload["gold_answer"] = gold_answer
         if not is_verifiable:
             payload["boxed_answer"] = ""
@@ -1019,14 +1003,6 @@ class ProofOPDEnv(vf.MultiTurnEnv):
             "task_type": payload.get("task_type") or info.get("task_type") or self._input_value(state, "task_type"),
             "problem": clipped_trace_text(self._problem(state)),
             "gold_answer": payload.get("gold_answer") or info.get("gold_answer") or self._input_value(state, "gold_answer"),
-            "boxed_answer": payload.get("boxed_answer", ""),
-            "boxed_present": payload.get("boxed_present", 0.0),
-            "verifiable_accuracy": payload.get("verifiable_accuracy", -1.0),
-            "answer_match_method": payload.get("answer_match_method", "not_verifiable"),
-            "answer_match_method_id": payload.get(
-                "answer_match_method_id",
-                VERIFIABLE_ANSWER_MATCH_METHOD_IDS["not_verifiable"],
-            ),
             "reward": payload.get("reward", 0.0),
             "format_score": payload.get("format_score", 0.0),
             "format_ok": payload.get("format_ok", False),
@@ -1187,7 +1163,7 @@ class ProofOPDEnv(vf.MultiTurnEnv):
             "meta_invalid_reason": "",
             "stage_records": list(state.get("proof_opd_stage_records") or []),
         }
-        self._attach_verifiable_metrics(state, payload, parsed)
+        self._attach_eval_answer_metrics(state, payload, parsed)
         verifiable_accuracy = float(payload.get("verifiable_accuracy", 0.0) or 0.0)
         payload["reward"] = max(0.0, verifiable_accuracy)
         return payload
@@ -1268,7 +1244,6 @@ class ProofOPDEnv(vf.MultiTurnEnv):
             "selected_refinement_reviews": selected_refinement_reviews,
             "stage_records": list(state.get("proof_opd_stage_records") or []),
         }
-        self._attach_verifiable_metrics(state, payload, generation)
         rounds = state.setdefault("proof_opd_rounds", [])
         rounds.append(payload)
         best_idx = max(range(len(rounds)), key=lambda idx: float(rounds[idx].get("reward", 0.0) or 0.0))
@@ -1351,7 +1326,8 @@ class ProofOPDEnv(vf.MultiTurnEnv):
                     finish_reason=finish_reason,
                 )
                 payload["stage_records"] = list(state.get("proof_opd_stage_records") or [])
-                self._attach_verifiable_metrics(state, payload, parsed)
+                if self.verifiable_eval_mode:
+                    self._attach_eval_answer_metrics(state, payload, parsed)
                 state.setdefault("proof_opd_rounds", []).append(payload)
                 state["proof_opd_reward_payload"] = payload
                 LOGGER.info("Proof-OPD invalid generation: %s", json.dumps(payload, ensure_ascii=False))
