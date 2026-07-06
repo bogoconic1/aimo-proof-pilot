@@ -391,11 +391,6 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
         wandb_config = {
             "project": args.wandb_project,
             "name": args.wandb_name,
-            "log_extras": {
-                "samples": True,
-                "interval": max(1, int(args.prime_wandb_samples_interval)),
-                "sample_ratio": args.prime_wandb_samples_ratio,
-            },
         }
 
     orchestrator_config = {
