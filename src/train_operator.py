@@ -485,6 +485,58 @@ def upload_github_api_text(
     github_contents_api_json("PUT", repo, path_in_repo, branch, payload)
 
 
+def github_api_upload_error_is_retryable(exc: BaseException) -> bool:
+    detail = str(exc)
+    return any(
+        marker in detail
+        for marker in (
+            "HTTP 409",
+            "HTTP 422",
+            "HTTP 500",
+            "HTTP 502",
+            "HTTP 503",
+            "HTTP 504",
+            "timed out",
+            "Temporary failure",
+            "Connection reset",
+        )
+    )
+
+
+def upload_github_api_file(
+    repo: str,
+    path_in_repo: str,
+    local_path: Path,
+    branch: str,
+    message: str,
+    max_attempts: int = 8,
+) -> None:
+    text = local_path.read_text(encoding="utf-8", errors="replace")
+    last_error: BaseException | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            try:
+                _, sha = github_api_download_text_with_sha(repo, path_in_repo, branch)
+            except FileNotFoundError:
+                sha = None
+            upload_github_api_text(repo, path_in_repo, text, branch, message, sha=sha)
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt >= max_attempts or not github_api_upload_error_is_retryable(exc):
+                raise
+            logging.warning(
+                "GitHub API upload conflict/transient failure for %s/%s on %s; retrying (%d/%d).",
+                repo,
+                path_in_repo,
+                branch,
+                attempt,
+                max_attempts,
+            )
+            time.sleep(min(10.0, 0.5 * attempt) + random.uniform(0.0, 2.0))
+    raise RuntimeError(f"GitHub API upload failed after {max_attempts} attempts: {last_error}")
+
+
 def upload_github_git_file(
     args: argparse.Namespace,
     repo: str,
@@ -1632,8 +1684,7 @@ def upload_operator_output(
                     else nullcontext()
                 )
                 with upload_context:
-                    upload_github_git_file(
-                        args,
+                    upload_github_api_file(
                         repo_id,
                         target_path,
                         upload_path,
