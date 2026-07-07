@@ -390,7 +390,11 @@ def download_github_git_text(args: argparse.Namespace, repo: str, path_in_repo: 
 
 def download_github_raw_text(repo: str, path_in_repo: str, branch: str) -> str:
     token = os.environ.get("GITHUB_TOKEN", "").strip()
-    url = f"https://raw.githubusercontent.com/{repo.strip('/')}/{branch}/{path_in_repo.strip('/')}"
+    cache_bust = f"{time.time_ns()}-{os.getpid()}-{random.randrange(1_000_000)}"
+    url = (
+        f"https://raw.githubusercontent.com/{repo.strip('/')}/{branch}/{path_in_repo.strip('/')}"
+        f"?operator_cache_bust={cache_bust}"
+    )
     headers = {
         "Accept": "application/vnd.github.raw",
         "Cache-Control": "no-cache",
