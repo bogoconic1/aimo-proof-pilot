@@ -184,10 +184,11 @@ def write_prime_rl_config(path: Path, config: dict[str, Any]) -> None:
                 lines.append(f"{key} = {format_toml_value(value)}")
             lines.append("")
     write_toml_lines(lines, "orchestrator.renderer", config["renderer"])
-    write_toml_lines(lines, "inference.model", config["inference_model"])
-    write_toml_lines(lines, "inference.parallel", config["inference_parallel"])
-    write_toml_lines(lines, "inference", config["inference"])
-    if config.get("vllm_extra"):
+    if config.get("inference_model"):
+        write_toml_lines(lines, "inference.model", config["inference_model"])
+        write_toml_lines(lines, "inference.parallel", config["inference_parallel"])
+        write_toml_lines(lines, "inference", config["inference"])
+    if config.get("inference_model") and config.get("vllm_extra"):
         write_toml_lines(lines, "inference.vllm_extra", config["vllm_extra"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
@@ -492,6 +493,17 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
             "wait_for_weights_timeout": args.prime_checkpoint_wait_for_weights_timeout,
         }
 
+    policy_client_config: dict[str, Any] = {
+        "skip_model_check": args.prime_skip_model_check,
+    }
+    if args.prime_policy_base_url:
+        policy_client_config["base_url"] = [args.prime_policy_base_url]
+        policy_client_config["dp_rank_count"] = args.prime_policy_dp_rank_count or args.prime_vllm_data_parallel_size
+    if args.prime_policy_admin_base_url:
+        policy_client_config["admin_base_url"] = [args.prime_policy_admin_base_url]
+
+    include_local_inference = args.prime_component == "full" and args.prime_infer_gpus > 0
+
     return {
         "root": {
             "max_steps": args.max_train_steps,
@@ -508,7 +520,7 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
             "type": "single_node",
             "gpus_per_node": args.prime_gpus_per_node,
             "num_train_gpus": args.prime_train_gpus,
-            "num_infer_gpus": args.prime_infer_gpus,
+            "num_infer_gpus": args.prime_infer_gpus if include_local_inference else 0,
         },
         "model": {
             "name": args.model_path,
@@ -545,9 +557,7 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
             "name": args.model_path,
             "trust_remote_code": True,
         },
-        "orchestrator_model_client": {
-            "skip_model_check": args.prime_skip_model_check,
-        },
+        "orchestrator_model_client": policy_client_config,
         "train_sampling": {
             "temperature": args.prime_temperature,
             "max_completion_tokens": args.rollout_max_completion_tokens,
@@ -576,8 +586,59 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
             "trust_remote_code": True,
             "tool_call_parser": None,
             "reasoning_parser": args.prime_vllm_reasoning_parser,
-        },
+        }
+        if include_local_inference
+        else None,
         "inference_parallel": {
+            "tp": args.prime_vllm_tensor_parallel_size,
+            "dp": args.prime_vllm_data_parallel_size,
+        }
+        if include_local_inference
+        else None,
+        "inference": {
+            "gpu_memory_utilization": args.prime_vllm_gpu_memory_utilization,
+            "api_server_count": args.prime_vllm_api_server_count,
+            "enable_prefix_caching": args.prime_vllm_enable_prefix_caching,
+            "use_deep_gemm": args.prime_vllm_use_deep_gemm,
+        }
+        if include_local_inference
+        else None,
+        "vllm_extra": vllm_extra,
+    }
+
+
+def build_prime_policy_inference_config(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
+    vllm_extra = parse_extra_json(args.prime_vllm_extra)
+    if args.prime_vllm_quantization:
+        vllm_extra["quantization"] = args.prime_vllm_quantization
+    if args.prime_vllm_max_num_seqs is not None:
+        vllm_extra["max_num_seqs"] = args.prime_vllm_max_num_seqs
+    if args.prime_vllm_max_num_batched_tokens is not None:
+        vllm_extra["max_num_batched_tokens"] = args.prime_vllm_max_num_batched_tokens
+
+    return {
+        "root": {
+            "output_dir": str(output_dir),
+            "dry_run": False,
+        },
+        "log": {
+            "level": args.prime_log_level,
+            "json_logging": False,
+        },
+        "server": {
+            "host": "0.0.0.0",
+            "port": args.prime_policy_port,
+        },
+        "model": {
+            "name": args.model_path,
+            "dtype": args.prime_vllm_dtype,
+            "max_model_len": args.prime_vllm_max_model_len,
+            "enforce_eager": args.prime_vllm_enforce_eager,
+            "trust_remote_code": True,
+            "tool_call_parser": None,
+            "reasoning_parser": args.prime_vllm_reasoning_parser,
+        },
+        "parallel": {
             "tp": args.prime_vllm_tensor_parallel_size,
             "dp": args.prime_vllm_data_parallel_size,
         },
@@ -780,6 +841,39 @@ def start_teacher_inference(args: argparse.Namespace, log_dir: Path) -> subproce
     return process
 
 
+def run_prime_inference_component(args: argparse.Namespace, log_dir: Path, component: str) -> int:
+    inference_entrypoint = shutil.which("inference")
+    command_prefix = [inference_entrypoint] if inference_entrypoint else [sys.executable, "-m", "prime_rl.entrypoints.inference"]
+
+    if component == "policy_inference":
+        inference_dir = log_dir / "policy_inference"
+        config = build_prime_policy_inference_config(args, inference_dir)
+        config_path = inference_dir / "policy_inference.toml"
+        label = "policy"
+        gpu_ids = args.prime_policy_gpu_ids
+    elif component == "teacher_inference":
+        inference_dir = log_dir / "teacher_inference"
+        config = build_prime_teacher_inference_config(args, inference_dir)
+        config_path = inference_dir / "teacher_inference.toml"
+        label = "teacher"
+        gpu_ids = args.prime_opd_teacher_gpu_ids
+    else:
+        raise ValueError(f"Unsupported inference component {component!r}")
+
+    write_prime_inference_config(config_path, config)
+    log(f"Prime-RL {label} inference config written: {config_path}")
+    log(f"Prime-RL {label} inference log_dir={inference_dir}")
+    env = os.environ.copy()
+    if gpu_ids:
+        env["CUDA_VISIBLE_DEVICES"] = gpu_ids
+        log(f"Starting {label} inference on GPU(s) {gpu_ids}")
+    command = [*command_prefix, "@", str(config_path)]
+    start = time.monotonic()
+    return_code = run_logged_subprocess(command, env)
+    log(f"Prime-RL {label} inference exit status: {return_code} duration_s={time.monotonic() - start:.1f}")
+    return return_code
+
+
 def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description="Prime-RL training entrypoint for OLMo3Sink smoke tests")
     parser.add_argument("--backend", default="prime_rl")
@@ -831,6 +925,15 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--clean_output_dir", action="store_true")
     parser.add_argument("--dry_run_prime_rl", action="store_true")
     parser.add_argument("--prime_log_level", default="debug")
+    parser.add_argument(
+        "--prime_component",
+        default="full",
+        choices=("full", "trainer_orchestrator", "policy_inference", "teacher_inference"),
+        help=(
+            "Prime-RL component to run. 'full' preserves the existing single-node all-in-one launcher. "
+            "Use policy_inference, teacher_inference, and trainer_orchestrator for manual multi-node role-gated runs."
+        ),
+    )
     parser.add_argument("--prime_algorithm", default="grpo", choices=("grpo", "opd"))
     parser.add_argument("--prime_env_id", default="math-env")
     parser.add_argument("--prime_env_name", default="math")
@@ -906,6 +1009,17 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--prime_disable_zero_advantage_filter", type=parse_bool, default=False)
     parser.add_argument("--prime_skip_model_check", type=parse_bool, default=True)
     parser.add_argument(
+        "--prime_policy_base_url",
+        default=None,
+        help="External policy inference base URL for trainer_orchestrator mode, e.g. http://host:8000/v1.",
+    )
+    parser.add_argument(
+        "--prime_policy_admin_base_url",
+        default=None,
+        help="Optional external policy admin base URL. Defaults to policy base URL inside Prime-RL when unset.",
+    )
+    parser.add_argument("--prime_policy_dp_rank_count", type=int, default=None)
+    parser.add_argument(
         "--prime_weight_broadcast_type",
         default="filesystem",
         choices=("filesystem", "nccl"),
@@ -943,6 +1057,8 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--prime_renderer_reasoning_parser", default="think")
     parser.add_argument("--prime_vllm_tensor_parallel_size", type=int, default=1)
     parser.add_argument("--prime_vllm_data_parallel_size", type=int, default=1)
+    parser.add_argument("--prime_policy_port", type=int, default=8000)
+    parser.add_argument("--prime_policy_gpu_ids", default=None)
     parser.add_argument("--prime_vllm_max_model_len", type=int, default=8192)
     parser.add_argument("--prime_vllm_dtype", default="bfloat16")
     parser.add_argument("--prime_vllm_enforce_eager", type=parse_bool, default=False)
@@ -1048,6 +1164,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.wandb_mode:
         os.environ["WANDB_MODE"] = args.wandb_mode
     enable_system_nccl_preload_for_transformer_engine(args)
+
+    if args.prime_component in ("policy_inference", "teacher_inference"):
+        return run_prime_inference_component(args, log_dir, args.prime_component)
+
+    if args.prime_component == "trainer_orchestrator":
+        if not args.prime_policy_base_url:
+            raise ValueError("--prime_policy_base_url is required for --prime_component trainer_orchestrator")
+        if args.prime_algorithm == "opd" and not args.prime_opd_teacher_base_url:
+            raise ValueError("--prime_opd_teacher_base_url is required for OPD trainer_orchestrator mode")
+        args.prime_opd_start_teacher = False
 
     config_path = log_dir / "prime_rl.toml"
     config = build_prime_rl_config(args, output_dir)
