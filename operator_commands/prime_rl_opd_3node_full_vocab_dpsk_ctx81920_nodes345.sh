@@ -146,7 +146,7 @@ TRAIN_PY_ENV=(
 COMMON_ARGS=(
   --fetch-update
   --submissions-repo "${SUBMISSIONS_REPO:-https://github.com/nguyen599/aimo-proof-pilot.git}"
-  --submissions-ref "${SUBMISSIONS_REF:-5c8b997efbae56220c3ee898560db1abc1a1a964}"
+  --submissions-ref "${SUBMISSIONS_REF:-main}"
   --prime-rl-ref "${PRIME_RL_REF:-main}"
   --submissions-runtime-dir "${RUNTIME_ROOT}"
   --open-instruct-runtime-dir "${OPEN_INSTRUCT_RUNTIME_ROOT}"
