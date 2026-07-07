@@ -953,6 +953,7 @@ def run_operator_subprocess(
     output_parts: list[str] = []
     stdout_closed = False
     started = time.monotonic()
+    process_exited_at: float | None = None
     last_uploaded = started
     last_uploaded_size = live_output_path.stat().st_size if live_output_path and live_output_path.exists() else 0
 
@@ -1028,10 +1029,27 @@ def run_operator_subprocess(
             maybe_upload_live()
 
         return_code = process.poll()
-        if return_code is not None and stdout_closed:
-            reader.join(timeout=1)
-            maybe_upload_live(force=True)
-            return return_code, "".join(output_parts)
+        if return_code is not None:
+            if process_exited_at is None:
+                process_exited_at = time.monotonic()
+            if stdout_closed:
+                reader.join(timeout=1)
+                maybe_upload_live(force=True)
+                return return_code, "".join(output_parts)
+            if time.monotonic() - process_exited_at > 2.0:
+                logging.warning(
+                    "Operator subprocess pid=%s exited with code %s but stdout did not close; "
+                    "closing pipe and finalizing command.",
+                    process.pid,
+                    return_code,
+                )
+                try:
+                    process.stdout.close()
+                except Exception:
+                    pass
+                reader.join(timeout=1)
+                maybe_upload_live(force=True)
+                return return_code, "".join(output_parts)
 
         if cancel_event is not None and cancel_event.is_set():
             return terminate_process_group("Cancelled by an operator control command", 130)
