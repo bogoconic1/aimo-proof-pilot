@@ -412,17 +412,6 @@ def upload_github_git_file(
                 return
             except Exception as exc:
                 last_error = exc
-                try:
-                    run_github_git(["fetch", "--depth", "1", "origin", branch], cwd=repo_dir)
-                    run_github_git(["rebase", f"origin/{branch}"], cwd=repo_dir)
-                    run_github_git(["push", "origin", branch], cwd=repo_dir)
-                    return
-                except Exception as rebase_exc:
-                    last_error = rebase_exc
-                    try:
-                        run_github_git(["rebase", "--abort"], cwd=repo_dir)
-                    except Exception:
-                        pass
                 if attempt >= max_attempts:
                     raise GitPushConflict(str(last_error)) from last_error
                 logging.warning(
@@ -432,6 +421,10 @@ def upload_github_git_file(
                     attempt,
                     max_attempts,
                 )
+                try:
+                    run_github_git(["fetch", "--depth", "1", "origin", branch], cwd=repo_dir)
+                except Exception:
+                    pass
                 shutil.rmtree(repo_dir, ignore_errors=True)
                 backoff_seconds = min(45.0, 1.5 * attempt)
                 time.sleep(backoff_seconds + random.uniform(0.0, 12.0))
