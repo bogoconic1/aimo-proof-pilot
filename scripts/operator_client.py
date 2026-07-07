@@ -567,6 +567,8 @@ def fetch_outputs(args: argparse.Namespace) -> dict[str, str]:
                 branch = output_github_branch(args, node_from_output_path(path))
                 try:
                     text = github_raw_download_text(repo_id, path, branch)
+                except FileNotFoundError as exc:
+                    text = f"[operator_client] missing output file {repo_id}/{path} on branch {branch}: {exc}\n"
                 except Exception:
                     text = github_git_download_text(args, repo_id, path, branch)
             elif github_repo_dir is not None:
