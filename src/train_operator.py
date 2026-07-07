@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import logging
@@ -48,6 +49,10 @@ GITHUB_GIT_LOCKS: dict[str, threading.RLock] = {}
 
 
 class GitPushConflict(RuntimeError):
+    pass
+
+
+class OperatorUploadQueueBusy(RuntimeError):
     pass
 
 
@@ -168,11 +173,34 @@ def add_operator_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--operator_output_upload_stagger_seconds",
         type=float,
-        default=6.0,
+        default=0.0,
         help=(
-            "Maximum deterministic per-node delay before Git output uploads. "
-            "This prevents all nodes from pushing output_node files at the same instant."
+            "Legacy maximum deterministic per-node delay before Git output uploads. "
+            "Use --operator_output_upload_slot_seconds for queue-like node slots."
         ),
+    )
+    parser.add_argument(
+        "--operator_output_upload_slot_seconds",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional fixed per-node upload slot spacing for Git output uploads. "
+            "Disabled by default because the upload queue lock handles nodes in finish order."
+        ),
+    )
+    parser.add_argument(
+        "--operator_output_upload_queue_path",
+        default="/tmp/olmo_operator_output_upload.lock",
+        help=(
+            "Filesystem lock path used to serialize Git output uploads in finish order. "
+            "Set empty to disable. This works best when /tmp is shared across nodes."
+        ),
+    )
+    parser.add_argument(
+        "--operator_output_upload_queue_timeout_seconds",
+        type=float,
+        default=180.0,
+        help="Maximum time to wait for the output upload queue lock before uploading without it.",
     )
     parser.add_argument(
         "--operator_work_dir",
@@ -383,6 +411,50 @@ def upload_github_git_file(
                 backoff_seconds = min(45.0, 1.5 * attempt)
                 time.sleep(backoff_seconds + random.uniform(0.0, 12.0))
     raise GitPushConflict(f"Git upload failed after {max_attempts} attempts: {last_error}")
+
+
+@contextmanager
+def operator_output_upload_queue(args: argparse.Namespace, timeout_seconds: float | None = None):
+    lock_path_text = str(getattr(args, "operator_output_upload_queue_path", "") or "").strip()
+    if not lock_path_text:
+        yield
+        return
+    timeout = float(
+        timeout_seconds
+        if timeout_seconds is not None
+        else getattr(args, "operator_output_upload_queue_timeout_seconds", 180.0)
+    )
+    lock_path = Path(lock_path_text).expanduser()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + max(0.0, timeout)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if timeout <= 0 or time.monotonic() >= deadline:
+                    raise OperatorUploadQueueBusy(f"Output upload queue busy: {lock_path}") from exc
+                time.sleep(min(0.5, max(0.05, deadline - time.monotonic())))
+        try:
+            handle.seek(0)
+            handle.truncate()
+            handle.write(
+                json.dumps(
+                    {
+                        "host": os.uname().nodename if hasattr(os, "uname") else "unknown",
+                        "node": operator_node_label(args),
+                        "pid": os.getpid(),
+                        "time_utc": datetime.utcnow().isoformat() + "Z",
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            handle.flush()
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def cli_has_flag(argv: list[str], flag: str) -> bool:
@@ -705,6 +777,8 @@ def run_operator_subprocess(
             live_upload(live_output_path)
             last_uploaded = now
             last_uploaded_size = current_size
+        except OperatorUploadQueueBusy:
+            logging.info("Operator live output upload skipped because another node is publishing.")
         except Exception:
             logging.exception("Operator live output upload failed; continuing child command.")
 
@@ -806,7 +880,13 @@ def replacement_operator_command(args: argparse.Namespace) -> list[str]:
         "--operator_output_upload_max_bytes",
         str(args.operator_output_upload_max_bytes),
         "--operator_output_upload_stagger_seconds",
-        str(getattr(args, "operator_output_upload_stagger_seconds", 6.0)),
+        str(getattr(args, "operator_output_upload_stagger_seconds", 0.0)),
+        "--operator_output_upload_slot_seconds",
+        str(getattr(args, "operator_output_upload_slot_seconds", 0.0)),
+        "--operator_output_upload_queue_path",
+        str(getattr(args, "operator_output_upload_queue_path", "/tmp/olmo_operator_output_upload.lock")),
+        "--operator_output_upload_queue_timeout_seconds",
+        str(getattr(args, "operator_output_upload_queue_timeout_seconds", 180.0)),
         "--operator_work_dir",
         str(args.operator_work_dir),
         "--logdir",
@@ -1275,6 +1355,7 @@ def upload_operator_output(
     output_path: Path,
     node_label: str,
     path_in_repo: str | None = None,
+    queue_timeout_seconds: float | None = None,
 ) -> None:
     target_path = path_in_repo or operator_output_repo_path(args, node_label)
     repo_id = operator_output_repo(args)
@@ -1286,8 +1367,15 @@ def upload_operator_output(
     try:
         if operator_prefers_github(args):
             try:
+                slot_seconds = max(0.0, float(getattr(args, "operator_output_upload_slot_seconds", 0.0)))
                 stagger_seconds = max(0.0, float(getattr(args, "operator_output_upload_stagger_seconds", 0.0)))
-                if stagger_seconds > 0:
+                if slot_seconds > 0:
+                    try:
+                        node_index = int(str(node_label))
+                    except ValueError:
+                        node_index = int(hashlib.sha256(str(node_label).encode("utf-8")).hexdigest()[:2], 16)
+                    time.sleep((node_index % 8) * slot_seconds + random.uniform(0.0, min(0.5, slot_seconds / 10.0)))
+                elif stagger_seconds > 0:
                     try:
                         node_index = int(str(node_label))
                     except ValueError:
@@ -1295,15 +1383,16 @@ def upload_operator_output(
                     slot_seconds = min(stagger_seconds, (node_index % 8) * (stagger_seconds / 8.0))
                     jitter_seconds = random.uniform(0.0, min(1.5, stagger_seconds / 4.0))
                     time.sleep(slot_seconds + jitter_seconds)
-                upload_github_git_file(
-                    args,
-                    repo_id,
-                    target_path,
-                    upload_path,
-                    args.operator_github_branch,
-                    message,
-                    max_attempts=20,
-                )
+                with operator_output_upload_queue(args, timeout_seconds=queue_timeout_seconds):
+                    upload_github_git_file(
+                        args,
+                        repo_id,
+                        target_path,
+                        upload_path,
+                        args.operator_github_branch,
+                        message,
+                        max_attempts=20,
+                    )
                 return
             except Exception as git_exc:
                 if getattr(args, "operator_backend", "github") != "auto":
@@ -1843,9 +1932,10 @@ def start_operator_action(
                 path,
                 node_label,
                 path_in_repo=operator_command_output_repo_path(args, node_label, command_hash),
+                queue_timeout_seconds=0.0,
             )
             if update_latest_output and latest_command_hash["value"] == command_hash:
-                upload_operator_output(args, path, node_label)
+                upload_operator_output(args, path, node_label, queue_timeout_seconds=0.0)
 
     initial_live_upload = str(getattr(args, "operator_initial_live_upload", "false")).lower() == "true"
     if initial_live_upload and live_upload_interval > 0:
