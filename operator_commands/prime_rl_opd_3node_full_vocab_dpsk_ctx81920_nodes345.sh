@@ -47,10 +47,10 @@ RUN_NAME="${OLMO_RUN_DIR_NAME:-${PRIME_3NODE_RUN_NAME:-prime_rl_opd_3node_full_v
 RENDEZVOUS_DIR="${PRIME_3NODE_RENDEZVOUS_DIR:-/tmp/prime_rl_opd_3node/${RUN_NAME}}"
 mkdir -p "${RENDEZVOUS_DIR}"
 
-# Keep transient install/build/cache files on /tmp by default so long runs do
-# not depend on RAM-backed /dev/shm. Override PRIME_3NODE_TMP_ROOT to move this
-# back to /dev/shm if the shared filesystem becomes inode-starved again.
-TMP_ROOT="${PRIME_3NODE_TMP_ROOT:-/tmp/pp3/${RUN_NAME}/${NODE_LABEL}_${PRIME_COMPONENT_ROLE}}"
+# Keep transient install/build/cache files in RAM-backed /dev/shm by default on
+# the shared operator cluster. The host maps /tmp to the shared /groups
+# filesystem, which is inode/quota constrained and can fail pip installs.
+TMP_ROOT="${PRIME_3NODE_TMP_ROOT:-/dev/shm/pp3/${RUN_NAME}/${NODE_LABEL}_${PRIME_COMPONENT_ROLE}}"
 mkdir -p "${TMP_ROOT}"/{tmp,xdg,pip,triton,torchinductor,ray,vllm,rpc}
 export TMPDIR="${TMP_ROOT}/tmp"
 export TMP="${TMPDIR}"
@@ -183,7 +183,7 @@ COMMON_ARGS=(
   --verl-runtime-dir "${VERL_RUNTIME_ROOT}"
   --prime-rl-runtime-dir "${PRIME_RL_RUNTIME_ROOT}"
   --runtime-fetch-state-dir "/tmp/train-runtime-fetch-${RUN_NAME}-${PRIME_COMPONENT_ROLE}"
-  --runtime-training-deps-dir "/tmp/olmo-train-runtime-deps-${RUN_NAME}-${PRIME_COMPONENT_ROLE}"
+  --runtime-training-deps-dir "${TMP_ROOT}/olmo-train-runtime-deps"
   --node_rank 0
   --num_nodes 1
   --backend prime_rl
