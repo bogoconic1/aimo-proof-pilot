@@ -1829,6 +1829,43 @@ def prime_rl_install_package_enabled() -> bool:
     return parse_bool(os.environ.get("PRIME_RL_INSTALL_PACKAGE"), False)
 
 
+def write_prime_rl_console_script_shims(site_dir: Path) -> None:
+    bin_dir = site_dir / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    module_by_name = {
+        "rl": "prime_rl.entrypoints.rl",
+        "sft": "prime_rl.entrypoints.sft",
+        "inference": "prime_rl.entrypoints.inference",
+        "trainer": "prime_rl.entrypoints.trainer",
+        "orchestrator": "prime_rl.entrypoints.orchestrator",
+    }
+    for script_name, module_name in module_by_name.items():
+        script_path = bin_dir / script_name
+        script_path.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            f'exec "{sys.executable}" -m {module_name} "$@"\n',
+            encoding="utf-8",
+        )
+        script_path.chmod(0o755)
+    env_server_path = bin_dir / "env-server"
+    env_server_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'exec "'
+        + sys.executable
+        + '" -c '
+        + shlex.quote(
+            "from prime_rl.orchestrator.env_server.env_server import main; "
+            "raise SystemExit(main())"
+        )
+        + ' "$@"\n',
+        encoding="utf-8",
+    )
+    env_server_path.chmod(0o755)
+    log(f"Wrote Prime-RL source-mode console script shims to {bin_dir}")
+
+
 def prime_rl_build_requirements() -> list[str]:
     override = os.environ.get("PRIME_RL_BUILD_REQUIREMENTS")
     if override:
@@ -2761,6 +2798,7 @@ def prepare_runtime_training_dependencies(
             if not entries:
                 raise RuntimeError(f"Prime-RL source checkout has no importable source paths: {prime_rl_dir}")
             prepend_pythonpath(*entries)
+            write_prime_rl_console_script_shims(site_dir)
             log(
                 "Activated Prime-RL from source paths instead of installing the package wheel. "
                 "Set PRIME_RL_INSTALL_PACKAGE=1 to restore pip package installation. "
@@ -3003,6 +3041,8 @@ def ensure_runtime_training_dependencies(
             if state_prime_rl_required:
                 log(f"node_rank={node_rank} skipping Prime-RL import preflight")
             os.environ["TRAIN_WRAPPER_RUNTIME_BIN"] = str(prepared_site / "bin")
+            if prepared_prime_rl:
+                write_prime_rl_console_script_shims(prepared_site)
             prepend_path(prepared_site / "bin", prepared_site.parent.parent.parent / "bin")
             prepend_runtime_library_path(prepared_site)
             if prepared_verl:
