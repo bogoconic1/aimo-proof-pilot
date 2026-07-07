@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib import request as urllib_request
+from urllib.error import HTTPError
 from pathlib import Path
 
 from huggingface_hub import HfApi, hf_hub_download
@@ -76,6 +78,14 @@ def output_github_branch(args: argparse.Namespace, node: str) -> str:
         return args.github_branch
     safe_node = normalize_node_label(node)
     return re.sub(r"[^A-Za-z0-9._/-]+", "-", template.format(node=safe_node)).strip("-/") or args.github_branch
+
+
+def configured_nodes(args: argparse.Namespace) -> list[str]:
+    raw = str(getattr(args, "nodes", "") or os.environ.get("OPERATOR_NODES", "")).strip()
+    if not raw:
+        return []
+    nodes = [normalize_node_label(part) for part in re.split(r"[,\s]+", raw) if part.strip()]
+    return sorted(dict.fromkeys(nodes), key=lambda value: int(value) if value.isdigit() else value)
 
 
 def github_token() -> str:
@@ -263,6 +273,26 @@ def github_git_download_text(args: argparse.Namespace, repo: str, path_in_repo: 
     if not path.is_file():
         raise FileNotFoundError(f"{repo}/{path_in_repo} not found in git worktree")
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+def github_raw_download_text(repo: str, path_in_repo: str, branch: str) -> str:
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    owner_repo = repo.strip("/")
+    url = f"https://raw.githubusercontent.com/{owner_repo}/{branch}/{path_in_repo.strip('/')}"
+    headers = {
+        "Accept": "application/vnd.github.raw",
+        "User-Agent": "operator-client",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib_request.Request(url, headers=headers)
+    try:
+        with urllib_request.urlopen(req, timeout=20) as response:
+            return response.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        if exc.code == 404:
+            raise FileNotFoundError(f"{repo}/{path_in_repo} not found on branch {branch}") from exc
+        raise
 
 
 def github_git_list_files(args: argparse.Namespace, repo: str, branch: str) -> list[str]:
@@ -495,7 +525,7 @@ def operator_nodes_from_key_file(args: argparse.Namespace) -> list[str]:
 
 def selected_output_paths(args: argparse.Namespace) -> list[str]:
     if args.node == "all" and normalize_command_id(getattr(args, "command_id", "")):
-        nodes = operator_nodes_from_key_file(args)
+        nodes = configured_nodes(args) or operator_nodes_from_key_file(args)
         if nodes:
             return [
                 output_path_for_node(args.prefix, node, args.command_id)
@@ -535,7 +565,10 @@ def fetch_outputs(args: argparse.Namespace) -> dict[str, str]:
         try:
             if client_prefers_github(args) and str(getattr(args, "output_github_branch_template", "") or "").strip():
                 branch = output_github_branch(args, node_from_output_path(path))
-                text = github_git_download_text(args, repo_id, path, branch)
+                try:
+                    text = github_raw_download_text(repo_id, path, branch)
+                except Exception:
+                    text = github_git_download_text(args, repo_id, path, branch)
             elif github_repo_dir is not None:
                 local_path = github_repo_dir / path
                 if not local_path.is_file():
@@ -814,6 +847,11 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--key-file", default="key.txt", help="Path to operator key file inside --repo.")
     parser.add_argument("--output-repo", default="", help="Repo containing output files. Defaults to --repo.")
     parser.add_argument("--prefix", default="", help="Optional output prefix used by --operator_output_prefix.")
+    parser.add_argument(
+        "--nodes",
+        default=os.environ.get("OPERATOR_NODES", ""),
+        help="Comma/space separated node labels for --node all command-specific fetches, e.g. 0,1,2,3,4,5.",
+    )
     parser.add_argument("--cache-dir", default="~/.cache/operator-client", help="Local HF/Git cache.")
     parser.add_argument("--github-branch", default="main", help="GitHub branch for --backend github.")
     parser.add_argument(
