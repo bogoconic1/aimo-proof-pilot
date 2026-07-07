@@ -51,7 +51,7 @@ mkdir -p "${RENDEZVOUS_DIR}"
 # the shared operator cluster. The host maps /tmp to the shared /groups
 # filesystem, which is inode/quota constrained and can fail pip installs.
 TMP_ROOT="${PRIME_3NODE_TMP_ROOT:-/dev/shm/pp3/${RUN_NAME}/${NODE_LABEL}_${PRIME_COMPONENT_ROLE}}"
-mkdir -p "${TMP_ROOT}"/{tmp,xdg,pip,triton,torchinductor,ray,vllm,rpc}
+mkdir -p "${TMP_ROOT}"/{tmp,xdg,pip,triton,torchinductor,ray,vllm,rpc,flashinfer,deep_gemm}
 export TMPDIR="${TMP_ROOT}/tmp"
 export TMP="${TMPDIR}"
 export TEMP="${TMPDIR}"
@@ -63,6 +63,9 @@ export RAY_TMPDIR="${TMP_ROOT}/ray"
 export VLLM_CACHE_ROOT="${TMP_ROOT}/vllm"
 export UV_CACHE_DIR="${TMP_ROOT}/uv"
 export VLLM_RPC_BASE_PATH="${TMP_ROOT}/rpc"
+export FLASHINFER_WORKSPACE_BASE="${TMP_ROOT}/flashinfer"
+export FLASHINFER_CUBIN_DIR="${TMP_ROOT}/flashinfer/.cache/flashinfer/cubins"
+export DG_JIT_CACHE_DIR="${TMP_ROOT}/deep_gemm"
 mkdir -p "${VLLM_RPC_BASE_PATH}"
 
 HOST_NAME="$(hostname 2>/dev/null || echo unknown-host)"
