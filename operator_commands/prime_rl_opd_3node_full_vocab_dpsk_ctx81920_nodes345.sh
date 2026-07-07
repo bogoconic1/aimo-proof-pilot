@@ -132,18 +132,18 @@ fi
 
 MODEL_PATH="${PRIME_OPD_MODEL_PATH:-/tmp/models/opd-32b-deploy/opd-32b-deploy}"
 TEACHER_MODEL_PATH="${PRIME_OPD_TEACHER_MODEL_PATH:-/tmp/models/dpsk-v4-flash}"
-RUNTIME_ROOT="${PRIME_3NODE_RUNTIME_ROOT:-/dev/shm/aimo-proof-pilot-runtime-${RUN_NAME}-${PRIME_COMPONENT_ROLE}}"
-OPEN_INSTRUCT_RUNTIME_ROOT="${PRIME_3NODE_OPEN_INSTRUCT_RUNTIME_ROOT:-/dev/shm/open-instruct-runtime-${RUN_NAME}-${PRIME_COMPONENT_ROLE}}"
-OLMO_CORE_RUNTIME_ROOT="${PRIME_3NODE_OLMO_CORE_RUNTIME_ROOT:-/dev/shm/OLMo-core-runtime-${RUN_NAME}-${PRIME_COMPONENT_ROLE}}"
-RLCSD_RUNTIME_ROOT="${PRIME_3NODE_RLCSD_RUNTIME_ROOT:-/dev/shm/RLCSD-runtime-${RUN_NAME}-${PRIME_COMPONENT_ROLE}}"
-VERL_RUNTIME_ROOT="${PRIME_3NODE_VERL_RUNTIME_ROOT:-/dev/shm/VERL-runtime-${RUN_NAME}-${PRIME_COMPONENT_ROLE}}"
-PRIME_RL_RUNTIME_ROOT="${PRIME_3NODE_PRIME_RL_RUNTIME_ROOT:-/dev/shm/prime-rl-runtime-${RUN_NAME}-${PRIME_COMPONENT_ROLE}}"
+RUNTIME_ROOT="${PRIME_3NODE_RUNTIME_ROOT:-/tmp/aimo-proof-pilot-runtime-${RUN_NAME}-${PRIME_COMPONENT_ROLE}}"
+OPEN_INSTRUCT_RUNTIME_ROOT="${PRIME_3NODE_OPEN_INSTRUCT_RUNTIME_ROOT:-/tmp/open-instruct-runtime-${RUN_NAME}-${PRIME_COMPONENT_ROLE}}"
+OLMO_CORE_RUNTIME_ROOT="${PRIME_3NODE_OLMO_CORE_RUNTIME_ROOT:-/tmp/OLMo-core-runtime-${RUN_NAME}-${PRIME_COMPONENT_ROLE}}"
+RLCSD_RUNTIME_ROOT="${PRIME_3NODE_RLCSD_RUNTIME_ROOT:-/tmp/RLCSD-runtime-${RUN_NAME}-${PRIME_COMPONENT_ROLE}}"
+VERL_RUNTIME_ROOT="${PRIME_3NODE_VERL_RUNTIME_ROOT:-/tmp/VERL-runtime-${RUN_NAME}-${PRIME_COMPONENT_ROLE}}"
+PRIME_RL_RUNTIME_ROOT="${PRIME_3NODE_PRIME_RL_RUNTIME_ROOT:-/tmp/prime-rl-runtime-${RUN_NAME}-${PRIME_COMPONENT_ROLE}}"
 DATASET_PATH="${PRIME_OPD_DATASET_PATH:-${RUNTIME_ROOT}/imo_data_1959_2024.csv}"
 VERIFIABLE_DATASET_PATH="${PRIME_OPD_VERIFIABLE_DATASET_PATH:-${RUNTIME_ROOT}/astralbench.csv}"
 EVAL_VERIFIABLE_DATASET_PATH="${PRIME_OPD_EVAL_VERIFIABLE_DATASET_PATH:-${RUNTIME_ROOT}/aime_2026.csv}"
 OUTPUT_ROOT="${PRIME_OPD_OUTPUT_ROOT:-/tmp/olmo3_prime_rl_multinode/output}"
-LOG_ROOT="${PRIME_OPD_LOG_ROOT:-/dev/shm/olmo3_prime_rl_multinode/logs}"
-CHECKPOINT_ROOT="${PRIME_OPD_CHECKPOINT_ROOT:-/dev/shm/olmo3_prime_rl_multinode/checkpoints/${RUN_NAME}_${PRIME_COMPONENT_ROLE}}"
+LOG_ROOT="${PRIME_OPD_LOG_ROOT:-/tmp/olmo3_prime_rl_multinode/logs}"
+CHECKPOINT_ROOT="${PRIME_OPD_CHECKPOINT_ROOT:-/tmp/olmo3_prime_rl_multinode/checkpoints/${RUN_NAME}_${PRIME_COMPONENT_ROLE}}"
 
 CTX_LEN="${PRIME_OPD_CTX_LEN:-81920}"
 VLLM_CTX_LEN="${PRIME_OPD_VLLM_MAX_MODEL_LEN:-98304}"
@@ -181,8 +181,8 @@ COMMON_ARGS=(
   --rlcsd-runtime-dir "${RLCSD_RUNTIME_ROOT}"
   --verl-runtime-dir "${VERL_RUNTIME_ROOT}"
   --prime-rl-runtime-dir "${PRIME_RL_RUNTIME_ROOT}"
-  --runtime-fetch-state-dir "/dev/shm/train-runtime-fetch-${RUN_NAME}-${PRIME_COMPONENT_ROLE}"
-  --runtime-training-deps-dir "/dev/shm/olmo-train-runtime-deps-${RUN_NAME}-${PRIME_COMPONENT_ROLE}"
+  --runtime-fetch-state-dir "/tmp/train-runtime-fetch-${RUN_NAME}-${PRIME_COMPONENT_ROLE}"
+  --runtime-training-deps-dir "/tmp/olmo-train-runtime-deps-${RUN_NAME}-${PRIME_COMPONENT_ROLE}"
   --node_rank 0
   --num_nodes 1
   --backend prime_rl
