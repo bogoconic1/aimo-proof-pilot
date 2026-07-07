@@ -640,7 +640,8 @@ def write_json_file(path: Path, payload: dict[str, object]) -> None:
 
 
 def coordinated_wrapper_run_dir_name(forwarded_args: list[str], base_logdir: Path) -> str:
-    node_rank = resolve_wrapper_node_rank(forwarded_args)
+    operator_mode = forwarded_operator_mode_enabled(forwarded_args)
+    node_rank = None if operator_mode else resolve_wrapper_node_rank(forwarded_args)
     num_nodes = wrapper_num_nodes(forwarded_args)
     if node_rank is None or num_nodes <= 1:
         return timestamp_run_dir_name()
@@ -2650,7 +2651,8 @@ def ensure_runtime_training_dependencies(
         return
 
     install_root, site_dir, megatron_dir, liger_dir, state_path = runtime_training_deps_paths(wrapper_args)
-    node_rank = resolve_wrapper_node_rank(forwarded_args)
+    operator_mode = forwarded_operator_mode_enabled(forwarded_args)
+    node_rank = None if operator_mode else resolve_wrapper_node_rank(forwarded_args)
     rank_label = "none" if node_rank is None else str(node_rank)
     grpo_required = grpo_runtime_dependencies_required(forwarded_args)
     rlcsd_required = rlcsd_runtime_dependencies_required(forwarded_args)

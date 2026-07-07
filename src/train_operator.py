@@ -120,11 +120,12 @@ def add_operator_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--operator_github_api_refresh_interval_seconds",
         type=float,
-        default=10.0,
+        default=0.0,
         help=(
             "When polling GitHub commands in raw mode, also refresh through the "
             "GitHub contents API at this interval. This bounds raw CDN/cache "
-            "latency without spending API quota on every poll. Set <=0 to disable."
+            "latency without spending API quota on every poll. Default 0 disables "
+            "idle REST API refreshes."
         ),
     )
     parser.add_argument(
