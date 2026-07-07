@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
+from urllib import request as urllib_request
+from urllib.error import HTTPError
 
 from train_logging import configure_logging, log_dependency_versions
 from train_utils import path_name_token, sanitize_slug_part, truncate_slug
@@ -373,6 +375,25 @@ def download_github_git_text(args: argparse.Namespace, repo: str, path_in_repo: 
         if not path.is_file():
             raise FileNotFoundError(f"{repo}/{path_in_repo} not found in git worktree")
         return path.read_text(encoding="utf-8", errors="replace")
+
+
+def download_github_raw_text(repo: str, path_in_repo: str, branch: str) -> str:
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    url = f"https://raw.githubusercontent.com/{repo.strip('/')}/{branch}/{path_in_repo.strip('/')}"
+    headers = {
+        "Accept": "application/vnd.github.raw",
+        "User-Agent": "train-operator",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib_request.Request(url, headers=headers)
+    try:
+        with urllib_request.urlopen(request, timeout=20) as response:
+            return response.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        if exc.code == 404:
+            raise FileNotFoundError(f"{repo}/{path_in_repo} not found on branch {branch}") from exc
+        raise
 
 
 def upload_github_git_file(
@@ -1174,6 +1195,15 @@ def upload_hf_operator_file(repo_id: str, path_in_repo: str, local_path: Path, m
 
 
 def download_operator_command(args: argparse.Namespace, work_dir: Path) -> str:
+    if operator_prefers_github(args):
+        try:
+            return download_github_raw_text(
+                args.operator_command_repo,
+                args.operator_command_file,
+                args.operator_github_branch,
+            )
+        except Exception:
+            logging.exception("Raw GitHub command download failed; falling back to Git checkout.")
     return download_operator_repo_text(args, work_dir, args.operator_command_file)
 
 
