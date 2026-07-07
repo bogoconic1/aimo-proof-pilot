@@ -194,11 +194,27 @@ DEFAULT_PRIME_RL_RUNTIME_REQUIREMENTS = (
     # runtime source tree provides a compatibility module backed by
     # graphql-core, and these versions match current Prime-RL metadata.
     "graphql-core>=3.2.0",
+    "beartype>=0.21.0",
+    "datasets>=4.0.0",
     "wandb>=0.26.1",
     "wandb-workspaces>=0.4.3",
     "nltk>=3.9.1",
     "jaxtyping>=0.3.2",
-    "weave"
+    "loguru>=0.7.3",
+    "pyarrow>=21.0.0",
+    "pyzmq>=27.1.0",
+    "aiolimiter>=1.2.1",
+    "tenacity>=8.2.0",
+    "openai>=1.106.1",
+    "orjson>=3.11.0",
+    "rich>=14.0.0",
+    "setproctitle>=1.3.0",
+    "uvloop>=0.21.0",
+    "nvidia-ml-py>=12.575.51",
+    "pybase64>=1.4.2",
+    "pandas>=2.0",
+    "msgspec>=0.18",
+    "weave",
 )
 PROTECTED_RUNTIME_OVERLAY_PACKAGES = (
     "flash_attn",
