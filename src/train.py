@@ -377,6 +377,29 @@ def log(message: str) -> None:
         )
 
 
+def configure_operator_tmpdir(forwarded_args: list[str]) -> None:
+    if not forwarded_operator_mode_enabled(forwarded_args):
+        return
+    current = os.environ.get("TMPDIR", "")
+    if current and not current.startswith("/tmp"):
+        return
+    shm_root = Path("/dev/shm")
+    if not shm_root.is_dir():
+        return
+    node_label = wrapper_log_node_label()
+    tmpdir = shm_root / "train-wrapper-tmp" / sanitize_slug_part(node_label) / f"pid{os.getpid()}"
+    try:
+        tmpdir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        log(f"Could not create operator TMPDIR {tmpdir}: {exc}")
+        return
+    for env_name in ("TMPDIR", "TMP", "TEMP"):
+        os.environ[env_name] = str(tmpdir)
+    os.environ.setdefault("PIP_CACHE_DIR", str(tmpdir.parent / "pip-cache"))
+    os.environ.setdefault("XDG_CACHE_HOME", str(tmpdir.parent / "xdg-cache"))
+    log(f"Using operator TMPDIR {tmpdir}")
+
+
 def redact_secret(value: str) -> str:
     token = os.environ.get("GITHUB_TOKEN")
     if token:
@@ -3121,6 +3144,7 @@ def main(argv: list[str] | None = None) -> int:
         log(f"Wrapper log file: {WRAPPER_LOG_FILE}")
     log(f"Raw CLI args: {cli_args_for_log(raw_args)}")
     log(f"Forwarded train_engine args: {cli_args_for_log(forwarded_args)}")
+    configure_operator_tmpdir(forwarded_args)
     fetch_update = True if wrapper_args.fetch_update is None else bool(wrapper_args.fetch_update)
     if fetch_update:
         prepared_repos = prepared_runtime_repos_from_env()
