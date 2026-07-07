@@ -59,6 +59,22 @@ def redacted(value: Any) -> Any:
     return value
 
 
+def prime_rl_pythonpath_entries(prime_rl_dir: Path) -> list[str]:
+    candidates = [
+        prime_rl_dir / "packages" / "prime-rl-configs" / "src",
+        prime_rl_dir / "src",
+        prime_rl_dir / "deps" / "pydantic-config" / "src",
+        prime_rl_dir / "deps" / "pydantic-config",
+        prime_rl_dir / "deps" / "renderers" / "src",
+        prime_rl_dir / "deps" / "renderers",
+        prime_rl_dir / "deps" / "verifiers" / "src",
+        prime_rl_dir / "deps" / "verifiers",
+        prime_rl_dir / "deps" / "research-environments" / "src",
+        prime_rl_dir / "deps" / "research-environments",
+    ]
+    return [str(path) for path in candidates if path.is_dir()]
+
+
 def configure_cuda_toolchain_env() -> None:
     cuda_home = Path(os.environ.get("CUDA_HOME") or "/usr/local/cuda")
     nvcc = cuda_home / "bin" / "nvcc"
@@ -1149,8 +1165,7 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["PYTHONPATH"] = os.pathsep.join(
             dict.fromkeys(
                 [
-                    str(prime_rl_dir / "packages" / "prime-rl-configs" / "src"),
-                    str(prime_rl_dir / "src"),
+                    *prime_rl_pythonpath_entries(prime_rl_dir),
                     *os.environ.get("PYTHONPATH", "").split(os.pathsep),
                 ]
             )

@@ -780,6 +780,23 @@ def engine_path_for_backend(engine_path: Path, forwarded_args: list[str]) -> Pat
     return engine_path
 
 
+def prime_rl_pythonpath_entries(prime_rl_dir: Path) -> list[str]:
+    """Source-tree paths needed to run Prime-RL without installing its wheel."""
+    candidates = [
+        prime_rl_dir / "packages" / "prime-rl-configs" / "src",
+        prime_rl_dir / "src",
+        prime_rl_dir / "deps" / "pydantic-config" / "src",
+        prime_rl_dir / "deps" / "pydantic-config",
+        prime_rl_dir / "deps" / "renderers" / "src",
+        prime_rl_dir / "deps" / "renderers",
+        prime_rl_dir / "deps" / "verifiers" / "src",
+        prime_rl_dir / "deps" / "verifiers",
+        prime_rl_dir / "deps" / "research-environments" / "src",
+        prime_rl_dir / "deps" / "research-environments",
+    ]
+    return [str(path) for path in candidates if path.is_dir()]
+
+
 def build_pythonpath(
     engine_path: Path,
     env: dict[str, str],
@@ -796,8 +813,7 @@ def build_pythonpath(
         parts.append(str(rlcsd_dir / "third_party" / "verl"))
         parts.append(str(rlcsd_dir))
     if prime_rl_dir is not None:
-        parts.append(str(prime_rl_dir / "packages" / "prime-rl-configs" / "src"))
-        parts.append(str(prime_rl_dir / "src"))
+        parts.extend(prime_rl_pythonpath_entries(prime_rl_dir))
     if open_instruct_dir is not None:
         parts.append(str(open_instruct_dir))
     if olmo_core_dir is not None:
@@ -1376,6 +1392,7 @@ def runtime_training_deps_settings(wrapper_args: argparse.Namespace) -> dict[str
         "prime_rl_source_requirements": prime_rl_source_requirements_string(),
         "prime_rl_runtime_pip_no_deps": str(prime_rl_runtime_pip_no_deps_enabled()).lower(),
         "prime_rl_install_from_git": str(parse_bool(os.environ.get("PRIME_RL_INSTALL_FROM_GIT"), False)).lower(),
+        "prime_rl_install_package": str(prime_rl_install_package_enabled()).lower(),
         "prime_rl_package_requirement": os.environ.get("PRIME_RL_PACKAGE_REQUIREMENT", "").strip(),
         "grpo_runtime_pip_no_deps": str(grpo_runtime_pip_no_deps_enabled()).lower(),
         "grpo_runtime_vllm_version": os.environ.get(
@@ -1465,8 +1482,7 @@ def runtime_dependency_env(site_dir: Path, megatron_dir: Path) -> dict[str, str]
     if prepared_prime_rl:
         prime_rl_dir = Path(prepared_prime_rl)
         env["PRIME_RL_DIR"] = str(prime_rl_dir)
-        parts.append(str(prime_rl_dir / "packages" / "prime-rl-configs" / "src"))
-        parts.append(str(prime_rl_dir / "src"))
+        parts.extend(prime_rl_pythonpath_entries(prime_rl_dir))
     if env.get("PYTHONPATH"):
         parts.extend(env["PYTHONPATH"].split(os.pathsep))
     env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(part for part in parts if part))
@@ -1728,6 +1744,10 @@ def prime_rl_source_requirements_string() -> str:
 
 def prime_rl_runtime_pip_no_deps_enabled() -> bool:
     return parse_bool(os.environ.get("PRIME_RL_RUNTIME_PIP_NO_DEPS"), False)
+
+
+def prime_rl_install_package_enabled() -> bool:
+    return parse_bool(os.environ.get("PRIME_RL_INSTALL_PACKAGE"), False)
 
 
 def prime_rl_build_requirements() -> list[str]:
@@ -2638,14 +2658,35 @@ def prepare_runtime_training_dependencies(
             no_build_isolation=True,
             no_deps=False,
         )
-        install_python_requirements(
-            prime_rl_install_requirements(prime_rl_dir),
-            site_dir,
-            "Prime-RL package",
-            no_build_isolation=True,
-            no_deps=True,
-            cwd=prime_rl_dir,
-        )
+        source_requirements = prime_rl_source_requirements()
+        if source_requirements:
+            install_python_requirements(
+                source_requirements,
+                site_dir,
+                "Prime-RL source dependencies",
+                no_build_isolation=True,
+                no_deps=True,
+                cwd=prime_rl_dir,
+            )
+        if prime_rl_install_package_enabled():
+            install_python_requirements(
+                [prime_rl_package_requirement(prime_rl_dir)],
+                site_dir,
+                "Prime-RL package",
+                no_build_isolation=True,
+                no_deps=True,
+                cwd=prime_rl_dir,
+            )
+        else:
+            entries = prime_rl_pythonpath_entries(prime_rl_dir)
+            if not entries:
+                raise RuntimeError(f"Prime-RL source checkout has no importable source paths: {prime_rl_dir}")
+            prepend_pythonpath(*entries)
+            log(
+                "Activated Prime-RL from source paths instead of installing the package wheel. "
+                "Set PRIME_RL_INSTALL_PACKAGE=1 to restore pip package installation. "
+                f"paths={os.pathsep.join(entries)}"
+            )
         install_python_global_requirements(
             verl_nvidia_runtime_requirements(),
             "Prime-RL final NVIDIA CUDA runtime",
