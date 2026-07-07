@@ -1734,7 +1734,7 @@ def prime_rl_build_requirements() -> list[str]:
     override = os.environ.get("PRIME_RL_BUILD_REQUIREMENTS")
     if override:
         return [requirement for requirement in shlex.split(override) if requirement]
-    return ["hatchling", "editables"]
+    return ["hatchling", "hatch-vcs", "editables"]
 
 
 def prime_rl_config_requirements(prime_rl_dir: Path) -> list[str]:
