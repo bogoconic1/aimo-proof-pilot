@@ -480,20 +480,21 @@ def send_command(args: argparse.Namespace, text: str | None = None) -> str:
     used_backend = args.backend
     if client_prefers_github(args):
         try:
-            github_api_upload_text(
+            github_git_upload_text(
+                args,
                 args.repo,
                 args.command_file,
                 uploaded_text,
                 args.github_branch,
                 f"Update operator command {args.command_file}",
             )
-            used_backend = "github-api"
+            used_backend = "github-git"
         except Exception as github_exc:
             if args.backend != "auto":
                 raise
             print(
                 (
-                    f"[operator_client] GitHub API upload failed for {args.repo}/{args.command_file}; "
+                    f"[operator_client] GitHub git upload failed for {args.repo}/{args.command_file}; "
                     f"falling back to HF because --backend auto: {github_exc}"
                 ),
                 file=sys.stderr,

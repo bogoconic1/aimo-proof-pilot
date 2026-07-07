@@ -1046,6 +1046,27 @@ def fetch_runtime_repos(
             submissions_dir,
             submissions_dir,
         )
+    if forwarded_args is not None and forwarded_backend(forwarded_args) == "prime_rl":
+        # Prime-RL runs use train_engine_rl.py from the submissions repo and the
+        # Prime-RL checkout. Avoid cloning unrelated training repos into /tmp on
+        # quota-limited multi-node hosts.
+        prime_rl_repo = settings["prime_rl_repo"]
+        prime_rl_ref = settings["prime_rl_ref"]
+        prime_rl_runtime_dir = Path(settings["prime_rl_runtime_dir"])
+        prime_rl_dir = ensure_runtime_repo(
+            prime_rl_repo,
+            prime_rl_ref,
+            prime_rl_runtime_dir,
+            "Prime-RL",
+        )
+        return (
+            submissions_dir / "src" / "train_engine.py",
+            submissions_dir,
+            submissions_dir,
+            submissions_dir,
+            submissions_dir,
+            prime_rl_dir,
+        )
 
     open_instruct_repo = settings["open_instruct_repo"]
     open_instruct_ref = settings["open_instruct_ref"]
@@ -1167,21 +1188,42 @@ def validate_runtime_paths(
     verl_dir: Path,
     prime_rl_dir: Path,
 ) -> str | None:
+    submissions_dir = engine_path.parent.parent
+    open_instruct_placeholder = same_file_path(open_instruct_dir, submissions_dir)
+    olmo_core_placeholder = same_file_path(olmo_core_dir, submissions_dir)
+    rlcsd_placeholder = same_file_path(rlcsd_dir, submissions_dir)
+    verl_placeholder = same_file_path(verl_dir, submissions_dir)
+    prime_rl_placeholder = same_file_path(prime_rl_dir, submissions_dir)
     checks = [
         (engine_path.is_file(), f"missing train engine {engine_path}"),
         (engine_path.with_name("train_engine_rl.py").is_file(), f"missing RL train engine {engine_path.with_name('train_engine_rl.py')}"),
         (engine_path.with_name("train_engine_verl.py").is_file(), f"missing VERL train engine {engine_path.with_name('train_engine_verl.py')}"),
-        ((open_instruct_dir / "open_instruct").is_dir(), f"missing open-instruct package {open_instruct_dir}"),
-        ((olmo_core_dir / "src").is_dir(), f"missing OLMo-core src dir {olmo_core_dir}"),
-        ((rlcsd_dir / "src").is_dir(), f"missing RLCSD src dir {rlcsd_dir}"),
         (
-            (rlcsd_dir / "third_party" / "verl" / "verl" / "__init__.py").is_file(),
+            open_instruct_placeholder or (open_instruct_dir / "open_instruct").is_dir(),
+            f"missing open-instruct package {open_instruct_dir}",
+        ),
+        (
+            olmo_core_placeholder or (olmo_core_dir / "src").is_dir(),
+            f"missing OLMo-core src dir {olmo_core_dir}",
+        ),
+        (
+            rlcsd_placeholder or (rlcsd_dir / "src").is_dir(),
+            f"missing RLCSD src dir {rlcsd_dir}",
+        ),
+        (
+            rlcsd_placeholder or (rlcsd_dir / "third_party" / "verl" / "verl" / "__init__.py").is_file(),
             f"missing RLCSD vendored verl package {rlcsd_dir}",
         ),
-        ((verl_dir / "verl" / "__init__.py").is_file(), f"missing VERL package {verl_dir}"),
-        ((prime_rl_dir / "src" / "prime_rl").is_dir(), f"missing Prime-RL src package {prime_rl_dir}"),
         (
-            (prime_rl_dir / "packages" / "prime-rl-configs" / "src" / "prime_rl").is_dir(),
+            verl_placeholder or (verl_dir / "verl" / "__init__.py").is_file(),
+            f"missing VERL package {verl_dir}",
+        ),
+        (
+            prime_rl_placeholder or (prime_rl_dir / "src" / "prime_rl").is_dir(),
+            f"missing Prime-RL src package {prime_rl_dir}",
+        ),
+        (
+            prime_rl_placeholder or (prime_rl_dir / "packages" / "prime-rl-configs" / "src" / "prime_rl").is_dir(),
             f"missing Prime-RL config package {prime_rl_dir}",
         ),
     ]
