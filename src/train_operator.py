@@ -118,6 +118,16 @@ def add_operator_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--operator_github_api_refresh_interval_seconds",
+        type=float,
+        default=10.0,
+        help=(
+            "When polling GitHub commands in raw mode, also refresh through the "
+            "GitHub contents API at this interval. This bounds raw CDN/cache "
+            "latency without spending API quota on every poll. Set <=0 to disable."
+        ),
+    )
+    parser.add_argument(
         "--operator_github_output_branch_template",
         default="operator-output-node-{node}",
         help=(
@@ -1056,6 +1066,8 @@ def replacement_operator_command(args: argparse.Namespace) -> list[str]:
         str(args.operator_github_branch),
         "--operator_github_command_download_mode",
         str(getattr(args, "operator_github_command_download_mode", "raw")),
+        "--operator_github_api_refresh_interval_seconds",
+        str(getattr(args, "operator_github_api_refresh_interval_seconds", 10.0)),
         "--operator_github_output_branch_template",
         str(getattr(args, "operator_github_output_branch_template", "operator-output-node-{node}")),
         "--operator_poll_interval_seconds",
@@ -1352,6 +1364,26 @@ def download_operator_command(args: argparse.Namespace, work_dir: Path) -> str:
                 )
             except Exception:
                 logging.exception("GitHub API command download failed; falling back to raw GitHub.")
+        if mode == "raw":
+            refresh_interval = max(
+                0.0,
+                float(getattr(args, "operator_github_api_refresh_interval_seconds", 10.0) or 0.0),
+            )
+            if refresh_interval > 0:
+                now = time.monotonic()
+                next_refresh = float(getattr(args, "_operator_next_command_api_refresh", 0.0) or 0.0)
+                if now >= next_refresh:
+                    setattr(args, "_operator_next_command_api_refresh", now + refresh_interval)
+                    try:
+                        return download_github_api_text(
+                            args.operator_command_repo,
+                            args.operator_command_file,
+                            args.operator_github_branch,
+                        )
+                    except Exception:
+                        logging.exception(
+                            "Periodic GitHub API command refresh failed; falling back to raw GitHub."
+                        )
         try:
             return download_github_raw_text(
                 args.operator_command_repo,
