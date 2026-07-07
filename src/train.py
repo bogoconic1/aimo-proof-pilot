@@ -569,6 +569,11 @@ def wrapper_run_dir_mode(forwarded_args: list[str]) -> str:
     return forwarded_option_value(forwarded_args, "--run_dir_mode", "--run-dir-mode") or "auto"
 
 
+def forwarded_operator_mode_enabled(forwarded_args: list[str]) -> bool:
+    operator_mode = forwarded_option_value(forwarded_args, "--operator_mode", "--operator-mode")
+    return parse_bool(operator_mode, False)
+
+
 def wrapper_run_dir_enabled(forwarded_args: list[str]) -> bool:
     if wrapper_run_dir_mode(forwarded_args) == "none":
         return False
@@ -576,8 +581,7 @@ def wrapper_run_dir_enabled(forwarded_args: list[str]) -> bool:
         return False
     if os.environ.get("OLMO_SWEEP_CHILD") == "1":
         return False
-    operator_mode = forwarded_option_value(forwarded_args, "--operator_mode", "--operator-mode")
-    if parse_bool(operator_mode, False):
+    if forwarded_operator_mode_enabled(forwarded_args):
         return False
     return True
 
@@ -1024,12 +1028,26 @@ def runtime_repo_settings(wrapper_args: argparse.Namespace) -> dict[str, str]:
     }
 
 
-def fetch_runtime_repos(wrapper_args: argparse.Namespace) -> tuple[Path, Path, Path, Path, Path, Path]:
+def fetch_runtime_repos(
+    wrapper_args: argparse.Namespace,
+    forwarded_args: list[str] | None = None,
+) -> tuple[Path, Path, Path, Path, Path, Path]:
     settings = runtime_repo_settings(wrapper_args)
     submissions_repo = settings["submissions_repo"]
     submissions_ref = settings["submissions_ref"]
     submissions_runtime_dir = Path(settings["submissions_runtime_dir"])
     submissions_dir = ensure_runtime_repo(submissions_repo, submissions_ref, submissions_runtime_dir, "submissions")
+    if forwarded_args is not None and forwarded_operator_mode_enabled(forwarded_args):
+        # Operator mode only needs the submission train_engine/train_operator files.
+        # Avoid cloning large training dependency repos just to keep a command gate alive.
+        return (
+            submissions_dir / "src" / "train_engine.py",
+            submissions_dir,
+            submissions_dir,
+            submissions_dir,
+            submissions_dir,
+            submissions_dir,
+        )
 
     open_instruct_repo = settings["open_instruct_repo"]
     open_instruct_ref = settings["open_instruct_ref"]
@@ -2817,7 +2835,8 @@ def coordinated_fetch_runtime_repos(
     wrapper_args: argparse.Namespace,
     forwarded_args: list[str],
 ) -> tuple[Path, Path, Path, Path, Path, Path]:
-    node_rank = resolve_wrapper_node_rank(forwarded_args)
+    operator_mode = forwarded_operator_mode_enabled(forwarded_args)
+    node_rank = None if operator_mode else resolve_wrapper_node_rank(forwarded_args)
     state_path, fingerprint = runtime_fetch_state_path(wrapper_args)
     rank_label = "none" if node_rank is None else str(node_rank)
     if node_rank in (None, 0):
@@ -2832,7 +2851,10 @@ def coordinated_fetch_runtime_repos(
             },
         )
         try:
-            engine_path, open_instruct_dir, olmo_core_dir, rlcsd_dir, verl_dir, prime_rl_dir = fetch_runtime_repos(wrapper_args)
+            engine_path, open_instruct_dir, olmo_core_dir, rlcsd_dir, verl_dir, prime_rl_dir = fetch_runtime_repos(
+                wrapper_args,
+                forwarded_args,
+            )
             missing = validate_runtime_paths(
                 engine_path,
                 open_instruct_dir,
@@ -2841,7 +2863,7 @@ def coordinated_fetch_runtime_repos(
                 verl_dir,
                 prime_rl_dir,
             )
-            if missing:
+            if missing and not operator_mode:
                 raise RuntimeError(missing)
         except Exception as exc:
             write_runtime_fetch_state(
