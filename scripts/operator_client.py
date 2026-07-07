@@ -138,7 +138,7 @@ def reset_github_git_worktree(repo_dir: Path, branch: str) -> None:
 
 def client_github_git_dir(args: argparse.Namespace, repo: str) -> Path:
     repo_hash = hashlib.sha256(repo.encode("utf-8")).hexdigest()[:12]
-    return Path(args.cache_dir).expanduser() / "github_git" / f"{repo_hash}_pid{os.getpid()}"
+    return Path(args.cache_dir).expanduser() / "github_git" / repo_hash
 
 
 def ensure_client_github_git_repo(
