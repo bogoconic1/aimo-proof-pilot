@@ -777,8 +777,6 @@ def run_operator_subprocess(
             live_upload(live_output_path)
             last_uploaded = now
             last_uploaded_size = current_size
-        except OperatorUploadQueueBusy:
-            logging.info("Operator live output upload skipped because another node is publishing.")
         except Exception:
             logging.exception("Operator live output upload failed; continuing child command.")
 
@@ -1932,10 +1930,9 @@ def start_operator_action(
                 path,
                 node_label,
                 path_in_repo=operator_command_output_repo_path(args, node_label, command_hash),
-                queue_timeout_seconds=0.0,
             )
             if update_latest_output and latest_command_hash["value"] == command_hash:
-                upload_operator_output(args, path, node_label, queue_timeout_seconds=0.0)
+                upload_operator_output(args, path, node_label)
 
     initial_live_upload = str(getattr(args, "operator_initial_live_upload", "false")).lower() == "true"
     if initial_live_upload and live_upload_interval > 0:
