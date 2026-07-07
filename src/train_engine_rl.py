@@ -713,8 +713,24 @@ def build_prime_teacher_inference_config(args: argparse.Namespace, output_dir: P
     }
 
 
-def run_logged_subprocess(command: list[str], env: dict[str, str], cwd: Path | None = None) -> int:
+def run_logged_subprocess(
+    command: list[str],
+    env: dict[str, str],
+    cwd: Path | None = None,
+    log_path: Path | None = None,
+) -> int:
     log("Running command: " + " ".join(shlex.quote(part) for part in command))
+    log_file = None
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log(f"Subprocess log: {log_path}")
+        log_file = log_path.open("a", encoding="utf-8")
+        print(
+            f"\n[{datetime.now().isoformat()}] Running command: "
+            + " ".join(shlex.quote(part) for part in command),
+            file=log_file,
+            flush=True,
+        )
     process = subprocess.Popen(
         command,
         cwd=str(cwd) if cwd else None,
@@ -725,9 +741,18 @@ def run_logged_subprocess(command: list[str], env: dict[str, str], cwd: Path | N
         bufsize=1,
     )
     assert process.stdout is not None
-    for line in process.stdout:
-        print(line, end="", flush=True)
-    return process.wait()
+    try:
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            if log_file is not None:
+                print(line, end="", file=log_file, flush=True)
+        return_code = process.wait()
+        if log_file is not None:
+            print(f"[{datetime.now().isoformat()}] exit_status={return_code}", file=log_file, flush=True)
+        return return_code
+    finally:
+        if log_file is not None:
+            log_file.close()
 
 
 def tail_file(path: Path, max_lines: int = 80) -> str:
@@ -885,7 +910,7 @@ def run_prime_inference_component(args: argparse.Namespace, log_dir: Path, compo
         log(f"Starting {label} inference on GPU(s) {gpu_ids}")
     command = [*command_prefix, "@", str(config_path)]
     start = time.monotonic()
-    return_code = run_logged_subprocess(command, env)
+    return_code = run_logged_subprocess(command, env, log_path=inference_dir / f"{label}_inference.log")
     log(f"Prime-RL {label} inference exit status: {return_code} duration_s={time.monotonic() - start:.1f}")
     return return_code
 
@@ -1220,7 +1245,7 @@ def main(argv: list[str] | None = None) -> int:
     teacher_process: subprocess.Popen | None = None
     try:
         teacher_process = start_teacher_inference(args, log_dir)
-        return_code = run_logged_subprocess(command, os.environ.copy())
+        return_code = run_logged_subprocess(command, os.environ.copy(), log_path=log_dir / "prime_rl_subprocess.log")
         log(f"Prime-RL exit status: {return_code} duration_s={time.monotonic() - start:.1f}")
         return return_code
     finally:
