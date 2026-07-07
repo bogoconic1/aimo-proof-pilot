@@ -47,22 +47,22 @@ RUN_NAME="${OLMO_RUN_DIR_NAME:-${PRIME_3NODE_RUN_NAME:-prime_rl_opd_3node_full_v
 RENDEZVOUS_DIR="${PRIME_3NODE_RENDEZVOUS_DIR:-/tmp/prime_rl_opd_3node/${RUN_NAME}}"
 mkdir -p "${RENDEZVOUS_DIR}"
 
-# Keep transient install/build/cache files off the shared /tmp Lustre mount.
-# /tmp is still used for tiny rendezvous files and Prime-RL filesystem weight
-# broadcast, because those paths must be visible from all three nodes.
-SHM_TMP_ROOT="${PRIME_3NODE_SHM_TMP_ROOT:-/dev/shm/pp3/${RUN_NAME}/${NODE_LABEL}_${PRIME_COMPONENT_ROLE}}"
-mkdir -p "${SHM_TMP_ROOT}"/{tmp,xdg,pip,triton,torchinductor,ray,vllm}
-export TMPDIR="${SHM_TMP_ROOT}/tmp"
+# Keep transient install/build/cache files on /tmp by default so long runs do
+# not depend on RAM-backed /dev/shm. Override PRIME_3NODE_TMP_ROOT to move this
+# back to /dev/shm if the shared filesystem becomes inode-starved again.
+TMP_ROOT="${PRIME_3NODE_TMP_ROOT:-/tmp/pp3/${RUN_NAME}/${NODE_LABEL}_${PRIME_COMPONENT_ROLE}}"
+mkdir -p "${TMP_ROOT}"/{tmp,xdg,pip,triton,torchinductor,ray,vllm}
+export TMPDIR="${TMP_ROOT}/tmp"
 export TMP="${TMPDIR}"
 export TEMP="${TMPDIR}"
-export XDG_CACHE_HOME="${SHM_TMP_ROOT}/xdg"
-export PIP_CACHE_DIR="${SHM_TMP_ROOT}/pip"
-export TRITON_CACHE_DIR="${SHM_TMP_ROOT}/triton"
-export TORCHINDUCTOR_CACHE_DIR="${SHM_TMP_ROOT}/torchinductor"
-export RAY_TMPDIR="${SHM_TMP_ROOT}/ray"
-export VLLM_CACHE_ROOT="${SHM_TMP_ROOT}/vllm"
-export UV_CACHE_DIR="${SHM_TMP_ROOT}/uv"
-export VLLM_RPC_BASE_PATH="${SHM_TMP_ROOT}/rpc"
+export XDG_CACHE_HOME="${TMP_ROOT}/xdg"
+export PIP_CACHE_DIR="${TMP_ROOT}/pip"
+export TRITON_CACHE_DIR="${TMP_ROOT}/triton"
+export TORCHINDUCTOR_CACHE_DIR="${TMP_ROOT}/torchinductor"
+export RAY_TMPDIR="${TMP_ROOT}/ray"
+export VLLM_CACHE_ROOT="${TMP_ROOT}/vllm"
+export UV_CACHE_DIR="${TMP_ROOT}/uv"
+export VLLM_RPC_BASE_PATH="${TMP_ROOT}/rpc"
 
 HOST_NAME="$(hostname 2>/dev/null || echo unknown-host)"
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
