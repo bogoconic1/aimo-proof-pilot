@@ -1525,6 +1525,16 @@ def operator_record_started_utc(raw_record: object) -> str | None:
     return None
 
 
+def operator_record_matches_local(
+    raw_record: object | None,
+    operator_key: str,
+    started_utc: str,
+) -> bool:
+    if not isinstance(raw_record, dict):
+        return False
+    return raw_record.get("key") == operator_key and raw_record.get("started_utc") == started_utc
+
+
 def operator_record_is_stale_for_local(
     raw_record: object | None,
     operator_started_utc: str,
@@ -1589,6 +1599,8 @@ def claim_operator_key_github_api(
                 registry = {"version": 1, "operators": {}}
             raw_record = operator_registry_record_for_node(registry, node_label)
             active_key = operator_registry_key_for_node(registry, node_label)
+            if operator_record_matches_local(raw_record, operator_key, started_utc):
+                return
             if active_key and not operator_record_is_stale_for_local(raw_record, started_utc):
                 remote_started = operator_record_started_utc(raw_record) or "<missing>"
                 raise RuntimeError(
@@ -1647,6 +1659,8 @@ def claim_operator_key(
             registry = download_operator_key_registry(args, work_dir, node_label)
             raw_record = operator_registry_record_for_node(registry, node_label)
             active_key = operator_registry_key_for_node(registry, node_label)
+            if operator_record_matches_local(raw_record, operator_key, started_utc):
+                return
             if active_key and not operator_record_is_stale_for_local(raw_record, started_utc):
                 remote_started = operator_record_started_utc(raw_record) or "<missing>"
                 raise RuntimeError(
