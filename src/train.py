@@ -186,12 +186,10 @@ DEFAULT_PRIME_RL_SOURCE_REQUIREMENTS = (
     ),
 )
 DEFAULT_PRIME_RL_RUNTIME_REQUIREMENTS = (
-    DEFAULT_VLLM_RUNTIME_WHEEL_URL,
-    # This vLLM dev wheel requires FastAPI below 0.137 while depending on
-    # Starlette 1.x directly, so keep the resolver on that exact boundary.
-    "fastapi>=0.133,<0.137",
-    "starlette>=1.0.1,<2.0",
-    "prometheus-fastapi-instrumentator>=8.0.0",
+    # Do not install vLLM here by default. The train images already carry a
+    # CUDA-matched vLLM build; replacing it at runtime is slow and can fail on
+    # clusters where the baked 0.24.x wheel is the working path. Set
+    # PRIME_RL_RUNTIME_VLLM_WHEEL_URL to opt into a specific replacement wheel.
     # Prime-RL's W&B monitor imports the historical wandb_gql module. Our
     # runtime source tree provides a compatibility module backed by
     # graphql-core, and these versions match current Prime-RL metadata.
@@ -1635,7 +1633,13 @@ def prime_rl_runtime_requirements() -> list[str]:
     override = os.environ.get("PRIME_RL_RUNTIME_REQUIREMENTS")
     if override:
         return [requirement for requirement in shlex.split(override) if requirement]
-    return list(DEFAULT_PRIME_RL_RUNTIME_REQUIREMENTS)
+    requirements = list(DEFAULT_PRIME_RL_RUNTIME_REQUIREMENTS)
+    vllm_wheel = os.environ.get("PRIME_RL_RUNTIME_VLLM_WHEEL_URL", "").strip()
+    if parse_bool(os.environ.get("PRIME_RL_RUNTIME_INSTALL_VLLM"), False):
+        vllm_wheel = vllm_wheel or DEFAULT_VLLM_RUNTIME_WHEEL_URL
+    if vllm_wheel:
+        requirements.insert(0, vllm_wheel)
+    return requirements
 
 
 def prime_rl_runtime_requirements_string() -> str:
