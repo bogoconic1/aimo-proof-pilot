@@ -1675,8 +1675,34 @@ def verl_nvidia_runtime_requirements_string() -> str:
 def prime_rl_runtime_requirements() -> list[str]:
     override = os.environ.get("PRIME_RL_RUNTIME_REQUIREMENTS")
     if override:
-        return [requirement for requirement in shlex.split(override) if requirement]
-    requirements = list(DEFAULT_PRIME_RL_RUNTIME_REQUIREMENTS)
+        requirements = [requirement for requirement in shlex.split(override) if requirement]
+    else:
+        requirements = list(DEFAULT_PRIME_RL_RUNTIME_REQUIREMENTS)
+    filtered: list[str] = []
+    skipped: list[str] = []
+    allow_runtime_vllm = parse_bool(os.environ.get("PRIME_RL_RUNTIME_INSTALL_VLLM"), False)
+    allow_runtime_torch = parse_bool(os.environ.get("PRIME_RL_RUNTIME_INSTALL_TORCH"), False)
+    for requirement in requirements:
+        head = requirement.strip()
+        if " @ " in head:
+            head = head.split(" @ ", 1)[0]
+        else:
+            head = re.split(r"[<>=!~; ]", head, maxsplit=1)[0]
+        normalized = normalize_distribution_name(head.split("[", 1)[0])
+        if normalized == "vllm" and not allow_runtime_vllm:
+            skipped.append(requirement)
+            continue
+        if normalized in {"torch", "torchvision", "torchaudio", "torchdata"} and not allow_runtime_torch:
+            skipped.append(requirement)
+            continue
+        filtered.append(requirement)
+    if skipped:
+        log(
+            "Skipping Prime-RL runtime requirements already provided by the container; "
+            "set PRIME_RL_RUNTIME_INSTALL_VLLM=1 or PRIME_RL_RUNTIME_INSTALL_TORCH=1 to override: "
+            + " ".join(skipped)
+        )
+    requirements = filtered
     vllm_wheel = os.environ.get("PRIME_RL_RUNTIME_VLLM_WHEEL_URL", "").strip()
     if parse_bool(os.environ.get("PRIME_RL_RUNTIME_INSTALL_VLLM"), False):
         vllm_wheel = vllm_wheel or DEFAULT_VLLM_RUNTIME_WHEEL_URL
