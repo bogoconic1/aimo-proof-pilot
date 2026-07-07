@@ -291,15 +291,55 @@ def run_github_git(args: list[str], cwd: Path | None = None) -> str:
     return process.stdout.strip()
 
 
+def github_git_sparse_checkout_patterns(args: argparse.Namespace, branch: str) -> list[str]:
+    node_label = operator_node_label(args)
+    output_branch = operator_output_github_branch(args, node_label)
+    if branch != output_branch:
+        return []
+
+    prefix = "/".join(
+        sanitize_slug_part(part)
+        for part in (getattr(args, "operator_output_prefix", "") or "").strip("/").split("/")
+        if part.strip()
+    )
+    base = f"/{prefix}/" if prefix else "/"
+    return [
+        f"{base}output_node{node_label}.txt",
+        f"{base}output_node{node_label}_*.txt",
+        f"{base}output_node{node_label}_inactive_*.txt",
+        f"{base}output_node{node_label}_poll_error.txt",
+    ]
+
+
+def configure_github_git_sparse_checkout(repo_dir: Path, patterns: list[str]) -> None:
+    if not patterns:
+        return
+    run_github_git(["config", "core.sparseCheckout", "true"], cwd=repo_dir)
+    sparse_file = repo_dir / ".git" / "info" / "sparse-checkout"
+    sparse_file.parent.mkdir(parents=True, exist_ok=True)
+    sparse_file.write_text("\n".join(patterns) + "\n", encoding="utf-8")
+
+
 def clone_github_git_repo(args: argparse.Namespace, repo_url: str, repo_dir: Path, branch: str) -> None:
+    sparse_patterns = github_git_sparse_checkout_patterns(args, branch)
     try:
-        run_github_git(["clone", "--depth", "1", "--branch", branch, repo_url, str(repo_dir)])
+        if sparse_patterns:
+            run_github_git(["clone", "--depth", "1", "--no-checkout", "--branch", branch, repo_url, str(repo_dir)])
+            configure_github_git_sparse_checkout(repo_dir, sparse_patterns)
+            run_github_git(["checkout", branch], cwd=repo_dir)
+        else:
+            run_github_git(["clone", "--depth", "1", "--branch", branch, repo_url, str(repo_dir)])
         return
     except Exception:
         if branch == getattr(args, "operator_github_branch", "main"):
             raise
     base_branch = str(getattr(args, "operator_github_branch", "main"))
-    run_github_git(["clone", "--depth", "1", "--branch", base_branch, repo_url, str(repo_dir)])
+    if sparse_patterns:
+        run_github_git(["clone", "--depth", "1", "--no-checkout", "--branch", base_branch, repo_url, str(repo_dir)])
+        configure_github_git_sparse_checkout(repo_dir, sparse_patterns)
+        run_github_git(["checkout", base_branch], cwd=repo_dir)
+    else:
+        run_github_git(["clone", "--depth", "1", "--branch", base_branch, repo_url, str(repo_dir)])
     run_github_git(["checkout", "-B", branch], cwd=repo_dir)
 
 
@@ -342,6 +382,7 @@ def ensure_github_git_repo(args: argparse.Namespace, repo: str, branch: str) -> 
     try:
         run_github_git(["remote", "set-url", "origin", repo_url], cwd=repo_dir)
         run_github_git(["config", "commit.gpgsign", "false"], cwd=repo_dir)
+        configure_github_git_sparse_checkout(repo_dir, github_git_sparse_checkout_patterns(args, branch))
         run_github_git(["reset", "--hard"], cwd=repo_dir)
         run_github_git(["clean", "-fd"], cwd=repo_dir)
         try:
