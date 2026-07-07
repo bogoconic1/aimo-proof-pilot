@@ -129,6 +129,20 @@ GROUP_SIZE="${PRIME_GROUP_SIZE:-8}"
 MAX_INFLIGHT="${PRIME_OPD_MAX_INFLIGHT_ROLLOUTS:-48}"
 MAX_OFF_POLICY="${PRIME_MAX_OFF_POLICY_STEPS:-32}"
 
+# The host/operator process exports GLOBAL_RANK/NODE_RANK for node selection.
+# Each Prime-RL component below is intentionally a single-node process, so do
+# not let train.py's runtime-fetch coordination reinterpret nodes 3/4/5 as
+# multinode training ranks and wait forever for a node-0 marker.
+TRAIN_PY_ENV=(
+  env
+  -u GLOBAL_RANK
+  -u NODE_RANK
+  -u SLURM_NODEID
+  -u RANK
+  -u LOCAL_RANK
+  -u WORLD_SIZE
+)
+
 COMMON_ARGS=(
   --fetch-update
   --submissions-repo "${SUBMISSIONS_REPO:-https://github.com/nguyen599/aimo-proof-pilot.git}"
@@ -218,7 +232,7 @@ COMMON_ARGS=(
 case "${PRIME_COMPONENT_ROLE}" in
   policy_inference)
     export OLMO_RUN_DIR_NAME="${RUN_NAME}_policy_node${NODE_LABEL}"
-    exec /usr/bin/python /app/train.py "${COMMON_ARGS[@]}" \
+    exec "${TRAIN_PY_ENV[@]}" /usr/bin/python /app/train.py "${COMMON_ARGS[@]}" \
       --prime_component policy_inference \
       --prime_policy_port "${POLICY_PORT}" \
       --prime_policy_gpu_ids "0,1,2,3,4,5,6,7" \
@@ -240,7 +254,7 @@ case "${PRIME_COMPONENT_ROLE}" in
 
   teacher_inference)
     export OLMO_RUN_DIR_NAME="${RUN_NAME}_teacher_node${NODE_LABEL}"
-    exec /usr/bin/python /app/train.py "${COMMON_ARGS[@]}" \
+    exec "${TRAIN_PY_ENV[@]}" /usr/bin/python /app/train.py "${COMMON_ARGS[@]}" \
       --prime_component teacher_inference \
       --prime_train_gpus 0 \
       --prime_infer_gpus 0 \
@@ -267,7 +281,7 @@ case "${PRIME_COMPONENT_ROLE}" in
     wait_for_http "http://${POLICY_IP}:${POLICY_PORT}/v1/models" "${PRIME_POLICY_READY_TIMEOUT:-7200}"
     wait_for_http "http://${TEACHER_IP}:${TEACHER_PORT}/v1/models" "${PRIME_TEACHER_READY_TIMEOUT:-7200}"
     export OLMO_RUN_DIR_NAME="${RUN_NAME}_trainer_node${NODE_LABEL}"
-    exec /usr/bin/python /app/train.py "${COMMON_ARGS[@]}" \
+    exec "${TRAIN_PY_ENV[@]}" /usr/bin/python /app/train.py "${COMMON_ARGS[@]}" \
       --prime_component trainer_orchestrator \
       --prime_train_gpus 8 \
       --prime_infer_gpus 0 \
