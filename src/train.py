@@ -186,10 +186,10 @@ DEFAULT_PRIME_RL_SOURCE_REQUIREMENTS = (
     ),
 )
 DEFAULT_PRIME_RL_RUNTIME_REQUIREMENTS = (
-    # Do not install vLLM here by default. The train images already carry a
-    # CUDA-matched vLLM build; replacing it at runtime is slow and can fail on
-    # clusters where the baked 0.24.x wheel is the working path. Set
-    # PRIME_RL_RUNTIME_VLLM_WHEEL_URL to opt into a specific replacement wheel.
+    # Prime-RL/vLLM 0.24 currently trips OLMo3Sink RoPE loading with dict
+    # rope_scaling values. The runtime dependency resolver installs
+    # DEFAULT_VLLM_RUNTIME_WHEEL_URL by default; set PRIME_RL_RUNTIME_INSTALL_VLLM=0
+    # to keep the baked image wheel, or PRIME_RL_RUNTIME_VLLM_WHEEL_URL to override.
     # Prime-RL's W&B monitor imports the historical wandb_gql module. Our
     # runtime source tree provides a compatibility module backed by
     # graphql-core, and these versions match current Prime-RL metadata.
@@ -1696,7 +1696,7 @@ def prime_rl_runtime_requirements() -> list[str]:
         requirements = list(DEFAULT_PRIME_RL_RUNTIME_REQUIREMENTS)
     filtered: list[str] = []
     skipped: list[str] = []
-    allow_runtime_vllm = parse_bool(os.environ.get("PRIME_RL_RUNTIME_INSTALL_VLLM"), False)
+    allow_runtime_vllm = parse_bool(os.environ.get("PRIME_RL_RUNTIME_INSTALL_VLLM"), True)
     allow_runtime_torch = parse_bool(os.environ.get("PRIME_RL_RUNTIME_INSTALL_TORCH"), False)
     for requirement in requirements:
         head = requirement.strip()
@@ -1720,7 +1720,7 @@ def prime_rl_runtime_requirements() -> list[str]:
         )
     requirements = filtered
     vllm_wheel = os.environ.get("PRIME_RL_RUNTIME_VLLM_WHEEL_URL", "").strip()
-    if parse_bool(os.environ.get("PRIME_RL_RUNTIME_INSTALL_VLLM"), False):
+    if allow_runtime_vllm:
         vllm_wheel = vllm_wheel or DEFAULT_VLLM_RUNTIME_WHEEL_URL
     if vllm_wheel:
         requirements.insert(0, vllm_wheel)
