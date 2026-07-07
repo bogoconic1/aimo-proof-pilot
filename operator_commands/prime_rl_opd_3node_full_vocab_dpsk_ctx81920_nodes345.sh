@@ -40,6 +40,22 @@ RUN_NAME="${OLMO_RUN_DIR_NAME:-${PRIME_3NODE_RUN_NAME:-prime_rl_opd_3node_full_v
 RENDEZVOUS_DIR="${PRIME_3NODE_RENDEZVOUS_DIR:-/tmp/prime_rl_opd_3node/${RUN_NAME}}"
 mkdir -p "${RENDEZVOUS_DIR}"
 
+# Keep transient install/build/cache files off the shared /tmp Lustre mount.
+# /tmp is still used for tiny rendezvous files and Prime-RL filesystem weight
+# broadcast, because those paths must be visible from all three nodes.
+SHM_TMP_ROOT="${PRIME_3NODE_SHM_TMP_ROOT:-/dev/shm/prime_rl_opd_3node/${RUN_NAME}/${NODE_LABEL}_${PRIME_COMPONENT_ROLE}}"
+mkdir -p "${SHM_TMP_ROOT}"/{tmp,xdg,pip,triton,torchinductor,ray,vllm}
+export TMPDIR="${TMPDIR:-${SHM_TMP_ROOT}/tmp}"
+export TMP="${TMP:-${TMPDIR}}"
+export TEMP="${TEMP:-${TMPDIR}}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${SHM_TMP_ROOT}/xdg}"
+export PIP_CACHE_DIR="${PIP_CACHE_DIR:-${SHM_TMP_ROOT}/pip}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${SHM_TMP_ROOT}/triton}"
+export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-${SHM_TMP_ROOT}/torchinductor}"
+export RAY_TMPDIR="${RAY_TMPDIR:-${SHM_TMP_ROOT}/ray}"
+export VLLM_CACHE_ROOT="${VLLM_CACHE_ROOT:-${SHM_TMP_ROOT}/vllm}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-${SHM_TMP_ROOT}/uv}"
+
 HOST_NAME="$(hostname 2>/dev/null || echo unknown-host)"
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 if [[ -z "${HOST_IP}" ]]; then
@@ -118,7 +134,8 @@ DATASET_PATH="${PRIME_OPD_DATASET_PATH:-${RUNTIME_ROOT}/imo_data_1959_2024.csv}"
 VERIFIABLE_DATASET_PATH="${PRIME_OPD_VERIFIABLE_DATASET_PATH:-${RUNTIME_ROOT}/astralbench.csv}"
 EVAL_VERIFIABLE_DATASET_PATH="${PRIME_OPD_EVAL_VERIFIABLE_DATASET_PATH:-${RUNTIME_ROOT}/aime_2026.csv}"
 OUTPUT_ROOT="${PRIME_OPD_OUTPUT_ROOT:-/tmp/olmo3_prime_rl_multinode/output}"
-LOG_ROOT="${PRIME_OPD_LOG_ROOT:-/tmp/olmo3_prime_rl_multinode/logs}"
+LOG_ROOT="${PRIME_OPD_LOG_ROOT:-/dev/shm/olmo3_prime_rl_multinode/logs}"
+CHECKPOINT_ROOT="${PRIME_OPD_CHECKPOINT_ROOT:-/dev/shm/olmo3_prime_rl_multinode/checkpoints/${RUN_NAME}_${PRIME_COMPONENT_ROLE}}"
 
 CTX_LEN="${PRIME_OPD_CTX_LEN:-81920}"
 VLLM_CTX_LEN="${PRIME_OPD_VLLM_MAX_MODEL_LEN:-98304}"
@@ -223,6 +240,7 @@ COMMON_ARGS=(
   --prime_checkpoint_interval "${PRIME_CHECKPOINT_INTERVAL:-100}"
   --prime_checkpoint_keep_last "${PRIME_CHECKPOINT_KEEP_LAST:-2}"
   --prime_checkpoint_keep_interval "${PRIME_CHECKPOINT_KEEP_INTERVAL:-0}"
+  --prime_checkpoint_output_dir "${CHECKPOINT_ROOT}"
   --prime_checkpoint_weights_only "${PRIME_CHECKPOINT_WEIGHTS_ONLY:-true}"
   --prime_checkpoint_wait_for_weights_timeout "${PRIME_CHECKPOINT_WAIT_FOR_WEIGHTS_TIMEOUT:-7200}"
   --prime_skip_model_check true
