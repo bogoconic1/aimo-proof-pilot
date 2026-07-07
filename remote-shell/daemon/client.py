@@ -7,10 +7,11 @@ Run it (foreground, or under nohup / tmux / systemd):
 
     export HF_TOKEN="hf_..."                       # token with access to the private Space (this is the auth)
     export CLIENT_ID="$(hostname)"                 # how it shows up in the UI (optional)
+    export RELAY_SPACE="imo2026-challenge/control-panel-nguyen"  # optional
     python client.py
 
-The relay Space repo id is hard-coded in SPACE below; edit that constant if you
-ever point the daemon at a different relay.
+The relay Space repo id defaults to imo2026-challenge/control-panel, but can be
+overridden with RELAY_SPACE, REMOTE_SHELL_SPACE, or CONTROL_PANEL_SPACE.
 
 Each command carries a `session` name. Commands with the same session name share
 one long-lived bash process, so `cd`, exports, and activated venvs persist.
@@ -69,7 +70,13 @@ def _default_client_id() -> str:
     return f"{user}@{_primary_ip()}"
 
 
-SPACE = "imo2026-challenge/control-panel"        # the relay Space repo id (hard-coded)
+DEFAULT_SPACE = "imo2026-challenge/control-panel"
+SPACE = (
+    os.environ.get("RELAY_SPACE")
+    or os.environ.get("REMOTE_SHELL_SPACE")
+    or os.environ.get("CONTROL_PANEL_SPACE")
+    or DEFAULT_SPACE
+)
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
 CLIENT_ID = os.environ.get("CLIENT_ID") or _default_client_id()
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))

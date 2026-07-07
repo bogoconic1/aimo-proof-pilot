@@ -1,8 +1,11 @@
 set -euo pipefail
 
-LOGS=/tmp/imochallenge/logs
-RUN=/tmp/imochallenge/run
-PYTHON_SITE=/tmp/imochallenge/python_site
+RELAY_SPACE="${RELAY_SPACE:-${REMOTE_SHELL_SPACE:-${CONTROL_PANEL_SPACE:-imo2026-challenge/control-panel}}}"
+SPACE_SLUG="${RELAY_SPACE//\//_}"
+SPACE_SLUG="${SPACE_SLUG//[^A-Za-z0-9_.-]/_}"
+LOGS="/tmp/imochallenge/logs"
+RUN="/tmp/imochallenge/run"
+PYTHON_SITE="/tmp/imochallenge/python_site"
 mkdir -p "$LOGS" "$RUN" "$PYTHON_SITE"
 
 NODE_LABEL="${GLOBAL_RANK:-${NODE_RANK:-${SLURM_NODEID:-${RANK:-none}}}}"
@@ -14,8 +17,10 @@ export HF_HUB_DISABLE_TELEMETRY=1
 export DO_NOT_TRACK=1
 export POLL_INTERVAL="${POLL_INTERVAL:-5}"
 export CLIENT_ID="${CLIENT_ID:-node${NODE_LABEL}-${HOST}}"
+export RELAY_SPACE
 
 echo "remote-shell daemon hotfix node=${NODE_LABEL} host=${HOST}"
+echo "relay_space=${RELAY_SPACE}"
 echo "python=${PY}"
 echo "python_site=${PYTHON_SITE}"
 echo "hf_token_present=$([ -n "${HF_TOKEN:-${HUGGINGFACE_TOKEN:-}}" ] && echo yes || echo no)"
@@ -37,13 +42,68 @@ import gradio_client
 print("gradio_client import OK", getattr(gradio_client, "__version__", "unknown"))
 PY
 
-if pgrep -af "python.* /app/remote-shell/daemon/client.py" | grep -v "operator_client" | grep -v "grep" >/tmp/remote-shell-client-existing.txt; then
-    echo "remote-shell daemon already running:"
-    cat /tmp/remote-shell-client-existing.txt
+CLIENT_SRC="${REMOTE_SHELL_CLIENT_PY:-}"
+if [ -z "$CLIENT_SRC" ]; then
+    CLIENT_REPO_DIR="${REMOTE_SHELL_CLIENT_REPO_DIR:-/tmp/aimo-proof-pilot-remote-shell}"
+    CLIENT_REPO_URL="${SUBMISSIONS_REPO:-https://github.com/nguyen599/aimo-proof-pilot.git}"
+    CLIENT_REPO_REF="${SUBMISSIONS_REF:-main}"
+    if [ ! -d "$CLIENT_REPO_DIR/.git" ]; then
+        rm -rf "$CLIENT_REPO_DIR"
+        git clone "$CLIENT_REPO_URL" "$CLIENT_REPO_DIR"
+    fi
+    git -C "$CLIENT_REPO_DIR" fetch origin "$CLIENT_REPO_REF"
+    git -C "$CLIENT_REPO_DIR" checkout --force FETCH_HEAD
+    CLIENT_SRC="$CLIENT_REPO_DIR/remote-shell/daemon/client.py"
+fi
+if [ ! -f "$CLIENT_SRC" ]; then
+    echo "remote-shell client missing: $CLIENT_SRC" >&2
+    exit 1
+fi
+export REMOTE_SHELL_CLIENT_PY="$CLIENT_SRC"
+echo "remote_shell_client=${REMOTE_SHELL_CLIENT_PY}"
+
+EXISTING_FILE="${RUN}/remote-shell-client-existing-${SPACE_SLUG}.txt"
+if "$PY" - "$RELAY_SPACE" > "$EXISTING_FILE" <<'PY'
+import os
+import sys
+
+target = sys.argv[1]
+matches = []
+for pid in os.listdir("/proc"):
+    if not pid.isdigit():
+        continue
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as handle:
+            cmd = handle.read().replace(b"\0", b" ").decode("utf-8", "replace")
+        if "remote-shell/daemon/client.py" not in cmd or "operator_client" in cmd:
+            continue
+        with open(f"/proc/{pid}/environ", "rb") as handle:
+            env_items = handle.read().split(b"\0")
+        env = {}
+        for item in env_items:
+            if b"=" in item:
+                key, value = item.split(b"=", 1)
+                env[key.decode("utf-8", "replace")] = value.decode("utf-8", "replace")
+        space = env.get("RELAY_SPACE") or env.get("REMOTE_SHELL_SPACE") or env.get("CONTROL_PANEL_SPACE")
+        if space == target:
+            matches.append((pid, cmd))
+    except OSError:
+        continue
+for pid, cmd in matches:
+    print(pid, cmd)
+sys.exit(0 if matches else 1)
+PY
+then
+    echo "remote-shell daemon already running for ${RELAY_SPACE}:"
+    cat "$EXISTING_FILE"
     exit 0
 fi
 
-cat > "$RUN/start-relay-daemon-fixed.sh" <<'EOF'
+START_SCRIPT="${RUN}/start-relay-daemon-${SPACE_SLUG}.sh"
+LOG_FILE="${LOGS}/relay-daemon-${SPACE_SLUG}.log"
+PID_FILE="${RUN}/relay-daemon-${SPACE_SLUG}.pid"
+
+cat > "$START_SCRIPT" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 PYTHON_SITE=/tmp/imochallenge/python_site
@@ -53,28 +113,33 @@ export GRADIO_ANALYTICS_ENABLED=False
 export HF_HUB_DISABLE_TELEMETRY=1
 export DO_NOT_TRACK=1
 export POLL_INTERVAL="${POLL_INTERVAL:-5}"
+export RELAY_SPACE="${RELAY_SPACE:-${REMOTE_SHELL_SPACE:-${CONTROL_PANEL_SPACE:-imo2026-challenge/control-panel}}}"
 NODE_LABEL="${GLOBAL_RANK:-${NODE_RANK:-${SLURM_NODEID:-${RANK:-none}}}}"
 HOST="$(hostname 2>/dev/null || echo unknown-host)"
 export CLIENT_ID="${CLIENT_ID:-node${NODE_LABEL}-${HOST}}"
-exec "$PY" /app/remote-shell/daemon/client.py
+CLIENT_PY="${REMOTE_SHELL_CLIENT_PY:-/app/remote-shell/daemon/client.py}"
+if [ ! -f "$CLIENT_PY" ]; then
+    CLIENT_PY="/tmp/aimo-proof-pilot/remote-shell/daemon/client.py"
+fi
+exec "$PY" "$CLIENT_PY"
 EOF
-chmod +x "$RUN/start-relay-daemon-fixed.sh"
+chmod +x "$START_SCRIPT"
 
 echo "starting remote-shell daemon without touching existing entrypoint/operator processes"
-setsid nohup "$RUN/start-relay-daemon-fixed.sh" >> "$LOGS/relay-daemon-fix.log" 2>&1 < /dev/null &
+setsid nohup "$START_SCRIPT" >> "$LOG_FILE" 2>&1 < /dev/null &
 DAEMON_PID=$!
-echo "$DAEMON_PID" > "$RUN/relay-daemon-fix.pid"
+echo "$DAEMON_PID" > "$PID_FILE"
 sleep 3
 
 if kill -0 "$DAEMON_PID" 2>/dev/null; then
     echo "remote-shell daemon started pid=${DAEMON_PID}"
 else
     echo "remote-shell daemon exited during startup; tail follows"
-    tail -80 "$LOGS/relay-daemon-fix.log" || true
+    tail -80 "$LOG_FILE" || true
     exit 1
 fi
 
 echo "process check:"
-pgrep -af "python.* /app/remote-shell/daemon/client.py" || true
+pgrep -af "python.*remote-shell/daemon/client.py" || true
 echo "log tail:"
-tail -60 "$LOGS/relay-daemon-fix.log" || true
+tail -60 "$LOG_FILE" || true
