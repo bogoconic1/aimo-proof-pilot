@@ -125,10 +125,10 @@ PY
 # instead of train.py being PID 1. The daemon is outbound-only HTTPS to a private HF Space relay
 # (NII-approved). Config — HF_TOKEN, RELAY_SPACE, CLIENT_ID — is provided at RUNTIME; no secrets baked.
 COPY remote-shell/daemon /app/remote-shell/daemon
-# uv (installed by install_training_deps) — the base's python3.12 has no `venv` module, so `python
-# -m venv` fails; `uv venv` bootstraps its own and needs no python3.12-venv package.
-RUN uv venv /opt/venv-daemon \
- && uv pip install --python /opt/venv-daemon/bin/python --no-cache-dir -r /app/remote-shell/daemon/requirements.txt
+# Install daemon dependencies into the same Python used by the entrypoint.
+# Avoid a separate /opt/venv-daemon path because some container runtimes mount it without execute
+# permission, which prevents the relay daemon from starting.
+RUN uv pip install --system --no-cache-dir -r /app/remote-shell/daemon/requirements.txt
 COPY <<'EOF' /app/entrypoint.sh
 #!/bin/bash
 # PID 1. The container runs INDEFINITELY — only an external SIGKILL / teardown stops it. The
@@ -156,7 +156,7 @@ if [ -f /app/smoke_test_opd.py ]; then
 fi
 while :; do
     announce "RUNNING (daemon (re)starting)"
-    /opt/venv-daemon/bin/python /app/remote-shell/daemon/client.py 2>&1 | tee -a "$LOG"
+    /usr/bin/python3 /app/remote-shell/daemon/client.py 2>&1 | tee -a "$LOG"
     printf '[supervisor %s] daemon exited — restart in 5s\n' "$(date -u '+%F %T' 2>/dev/null)" | tee -a "$LOG"
     sleep 5 2>/dev/null || true
 done
