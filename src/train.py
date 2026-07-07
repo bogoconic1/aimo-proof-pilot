@@ -1444,6 +1444,8 @@ def runtime_training_deps_settings(wrapper_args: argparse.Namespace) -> dict[str
         "prime_rl_runtime_requirements": prime_rl_runtime_requirements_string(),
         "prime_rl_source_requirements": prime_rl_source_requirements_string(),
         "prime_rl_runtime_pip_no_deps": str(prime_rl_runtime_pip_no_deps_enabled()).lower(),
+        "prime_rl_config_pip_no_deps": str(prime_rl_config_pip_no_deps_enabled()).lower(),
+        "prime_rl_environment_pip_no_deps": str(prime_rl_environment_pip_no_deps_enabled()).lower(),
         "prime_rl_install_from_git": str(parse_bool(os.environ.get("PRIME_RL_INSTALL_FROM_GIT"), False)).lower(),
         "prime_rl_install_package": str(prime_rl_install_package_enabled()).lower(),
         "prime_rl_package_requirement": os.environ.get("PRIME_RL_PACKAGE_REQUIREMENT", "").strip(),
@@ -1797,6 +1799,14 @@ def prime_rl_source_requirements_string() -> str:
 
 def prime_rl_runtime_pip_no_deps_enabled() -> bool:
     return parse_bool(os.environ.get("PRIME_RL_RUNTIME_PIP_NO_DEPS"), False)
+
+
+def prime_rl_config_pip_no_deps_enabled() -> bool:
+    return parse_bool(os.environ.get("PRIME_RL_CONFIG_PIP_NO_DEPS"), True)
+
+
+def prime_rl_environment_pip_no_deps_enabled() -> bool:
+    return parse_bool(os.environ.get("PRIME_RL_ENVIRONMENT_PIP_NO_DEPS"), False)
 
 
 def prime_rl_install_package_enabled() -> bool:
@@ -2702,14 +2712,14 @@ def prepare_runtime_training_dependencies(
             site_dir,
             "Prime-RL configs",
             no_build_isolation=True,
-            no_deps=False,
+            no_deps=prime_rl_config_pip_no_deps_enabled(),
         )
         install_python_requirements(
             prime_rl_environment_requirements(prime_rl_dir),
             site_dir,
             "Prime-RL environments",
             no_build_isolation=True,
-            no_deps=False,
+            no_deps=prime_rl_environment_pip_no_deps_enabled(),
         )
         source_requirements = prime_rl_source_requirements()
         if source_requirements:
