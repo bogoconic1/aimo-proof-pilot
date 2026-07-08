@@ -607,8 +607,16 @@ def wrapper_run_dir_mode(forwarded_args: list[str]) -> str:
 
 
 def forwarded_operator_mode_enabled(forwarded_args: list[str]) -> bool:
-    operator_mode = forwarded_option_value(forwarded_args, "--operator_mode", "--operator-mode")
-    return parse_bool(operator_mode, False)
+    names = {"--operator_mode", "--operator-mode"}
+    for idx, arg in enumerate(forwarded_args):
+        if arg in names:
+            if idx + 1 < len(forwarded_args) and not forwarded_args[idx + 1].startswith("--"):
+                return parse_bool(forwarded_args[idx + 1], True)
+            return True
+        for name in names:
+            if arg.startswith(f"{name}="):
+                return parse_bool(arg.split("=", 1)[1], True)
+    return False
 
 
 def wrapper_run_dir_enabled(forwarded_args: list[str]) -> bool:
