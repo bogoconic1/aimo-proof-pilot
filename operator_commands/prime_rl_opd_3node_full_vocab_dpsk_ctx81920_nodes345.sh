@@ -78,8 +78,8 @@ export PRIME_RL_PREFILL_HIDDEN_CONCURRENCY="${PRIME_RL_PREFILL_HIDDEN_CONCURRENC
 export PRIME_RL_RUNTIME_INSTALL_VLLM="${PRIME_RL_RUNTIME_INSTALL_VLLM:-0}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
-POLICY_VLLM_EXTRA_DEFAULT='{"kv_cache_dtype":"fp8","block_size":256,"disable_custom_all_reduce":true,"additional_config":{}}'
-TEACHER_VLLM_EXTRA_DEFAULT='{"kv_cache_dtype":"fp8","block_size":256,"enable_expert_parallel":true,"linear_backend":"deep_gemm","disable_custom_all_reduce":true,"additional_config":{}}'
+POLICY_VLLM_EXTRA_DEFAULT='{"kv_cache_dtype":"fp8","block_size":256,"disable_custom_all_reduce":true,"compilation_config":{"cudagraph_mode":"NONE"},"additional_config":{}}'
+TEACHER_VLLM_EXTRA_DEFAULT='{"kv_cache_dtype":"fp8","block_size":256,"enable_expert_parallel":true,"linear_backend":"deep_gemm","disable_custom_all_reduce":true,"compilation_config":{"cudagraph_mode":"NONE"},"additional_config":{}}'
 
 RENDEZVOUS_DIR="${PRIME_3NODE_RENDEZVOUS_DIR:-/tmp/prime_rl_opd_3node/${RUN_NAME}}"
 mkdir -p "${RENDEZVOUS_DIR}"
@@ -122,6 +122,7 @@ print(json.dumps({
     "enable_expert_parallel": True,
     "linear_backend": "deep_gemm",
     "disable_custom_all_reduce": True,
+    "compilation_config": {"cudagraph_mode": "NONE"},
     "additional_config": {},
     "enable_chunked_prefill": False,
     "speculative_config": {
