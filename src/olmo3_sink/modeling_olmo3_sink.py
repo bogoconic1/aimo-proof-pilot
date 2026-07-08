@@ -12,8 +12,9 @@ Three changes
    `[num_attention_heads]` learnable parameter, passed to the attention kernel as
    `s_aux`. The kernel appends it as an extra column of softmax logits that is
    dropped after normalization (see gpt-oss). NOTE: the `sdpa` backend does NOT
-   support `s_aux`; use `eager` (debug), `flash_attention_2`, `flash_attention_3`,
-   or `flex_attention`. We assert this in the attention forward.
+   support `s_aux`; use `eager` (debug) or `olmo3_sink_fa3`. We assert this in
+   the attention forward so generic FlashAttention backends cannot silently drop
+   sink logits.
 
 2. Packing-metadata reuse. On a flash backend with packed `position_ids`, derive
    the varlen `cu_seqlens`/`max_seqlen` once in `Olmo3SinkModel.forward` and put
@@ -39,6 +40,7 @@ from copy import copy
 
 import torch
 import torch.nn as nn
+from torch import Tensor
 
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.masking_utils import create_causal_mask, create_sliding_window_causal_mask
@@ -102,6 +104,7 @@ def eager_attention_forward_with_sink(
 from transformers.utils.generic import TransformersKwargs
 
 from .configuration_olmo3_sink import Olmo3SinkConfig
+from .converting_olmo3_sink import convert_layer_to_vllm_kernel
 
 
 def _call_rope_init_for_layer(
@@ -253,10 +256,12 @@ class Olmo3SinkAttention(Olmo3Attention):
             key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx)
 
         attn_impl = self.config._attn_implementation
-        if attn_impl == "sdpa":
+        if attn_impl not in {"eager", "olmo3_sink_fa3"}:
             raise ValueError(
-                "Olmo3Sink uses attention sinks (s_aux), which the `sdpa` backend does not support. "
-                "Load with attn_implementation in {'eager','flash_attention_2','flash_attention_3','flex_attention'}."
+                "Olmo3Sink uses attention sinks (s_aux). Generic attention backends "
+                f"({attn_impl!r}) may silently ignore the sink argument. Load with "
+                "attn_implementation='olmo3_sink_fa3' for training, or 'eager' for "
+                "CPU/debug reference checks."
             )
 
         # Fallback (incl. attn_impl="eager") is our SINK-AWARE eager, not Olmo3's
@@ -291,6 +296,45 @@ class Olmo3SinkDecoderLayer(Olmo3DecoderLayer):
 class Olmo3SinkPreTrainedModel(Olmo3PreTrainedModel):
     config_class = Olmo3SinkConfig
     _no_split_modules = ["Olmo3SinkDecoderLayer"]
+
+    @classmethod
+    def from_config(cls, config, **kwargs):
+        """Mirror Prime-RL model classes, which call `from_config()` on meta."""
+        kwargs.pop("trust_remote_code", None)
+        return cls._from_config(config, **kwargs)
+
+    @classmethod
+    def is_hf_state_dict(cls, state_dict: dict[str, Tensor]) -> bool:
+        return True
+
+    @classmethod
+    def is_prime_state_dict(cls, state_dict: dict[str, Tensor]) -> bool:
+        return True
+
+    @classmethod
+    def convert_to_hf(cls, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+        return state_dict
+
+    @classmethod
+    def convert_to_prime(cls, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+        return state_dict
+
+    @classmethod
+    def convert_layer_to_hf(cls, state_dict: dict[str, Tensor], layer_idx: int) -> dict[str, Tensor]:
+        return state_dict
+
+    @classmethod
+    def convert_layer_to_prime(cls, state_dict: dict[str, Tensor], layer_idx: int) -> dict[str, Tensor]:
+        return state_dict
+
+    @classmethod
+    def convert_layer_to_vllm_kernel(
+        cls,
+        state_dict: dict[str, Tensor],
+        layer_idx: int,
+        quantize_fp8: bool = False,
+    ) -> dict[str, Tensor]:
+        return convert_layer_to_vllm_kernel(state_dict, layer_idx, quantize_fp8=quantize_fp8)
 
     def _init_weights(self, module):
         super()._init_weights(module)
