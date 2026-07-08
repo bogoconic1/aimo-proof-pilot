@@ -2362,8 +2362,58 @@ def patch_runtime_openenv_lazy_imports(site_dir: Path) -> None:
         log("Patched runtime OpenEnv lazy imports for GRPO: " + ", ".join(patched))
 
 
-def patch_runtime_vllm_pr47258() -> None:
+def install_vllm_runtime_sitecustomize_patch(site_dir: Path | None) -> None:
+    if site_dir is None:
+        return
+    marker = "AIMO_PROOF_PILOT_VLLM_SPARSE_MLA_WARMUP_PATCH"
+    path = site_dir / "sitecustomize.py"
+    patch = f'''
+
+# {marker}
+import os as _aimo_vllm_os
+if _aimo_vllm_os.getenv("VLLM_SKIP_DEEPSEEK_V4_SPARSE_MLA_WARMUP", "0") == "1":
+    try:
+        import logging as _aimo_vllm_logging
+        import vllm.model_executor.warmup.kernel_warmup as _aimo_vllm_kernel_warmup
+
+        def _aimo_skip_sparse_mla_warmup(worker):
+            _aimo_vllm_logging.getLogger(__name__).info(
+                "Skipping DeepSeek V4 sparse MLA startup warmup by sitecustomize patch."
+            )
+            return None
+
+        _aimo_vllm_kernel_warmup.flashinfer_sparse_mla_decode_autotune_warmup = (
+            _aimo_skip_sparse_mla_warmup
+        )
+        _aimo_vllm_kernel_warmup.deepseek_v4_sparse_mla_attention_warmup = (
+            _aimo_skip_sparse_mla_warmup
+        )
+    except Exception as _aimo_vllm_exc:
+        try:
+            import sys as _aimo_vllm_sys
+            print(
+                "WARNING: AIMO vLLM sparse MLA warmup sitecustomize patch failed: "
+                f"{{type(_aimo_vllm_exc).__name__}}: {{_aimo_vllm_exc}}",
+                file=_aimo_vllm_sys.stderr,
+            )
+        except Exception:
+            pass
+'''
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+        if marker not in existing:
+            path.write_text(existing.rstrip() + patch + "\n", encoding="utf-8")
+            log(f"Installed vLLM runtime sitecustomize patch: {path}")
+        else:
+            log(f"vLLM runtime sitecustomize patch already present: {path}")
+    except Exception as exc:
+        log(f"WARNING: Could not install vLLM runtime sitecustomize patch in {site_dir}: {exc}")
+
+
+def patch_runtime_vllm_pr47258(site_dir: Path | None = None) -> None:
     """Apply vLLM PR47258 until the image wheel includes it."""
+    install_vllm_runtime_sitecustomize_patch(site_dir)
     try:
         import vllm.model_executor.layers.fused_moe.oracle.fp8 as fp8_oracle
         import vllm.model_executor.warmup.deep_gemm_warmup as deep_gemm_warmup
@@ -2853,7 +2903,7 @@ def prepare_runtime_training_dependencies(
             os.environ.get("PRIME_RL_VLLM_OVERRIDE", "0") == "1"
             or os.environ.get("VLLM_SKIP_DEEPSEEK_V4_SPARSE_MLA_WARMUP", "0") == "1"
         ):
-            patch_runtime_vllm_pr47258()
+            patch_runtime_vllm_pr47258(site_dir)
         if te_required:
             te_ok, te_details = runtime_dependency_probe(
                 site_dir,
