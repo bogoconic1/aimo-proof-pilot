@@ -75,6 +75,7 @@ def ensure_vllm_pin(args: argparse.Namespace) -> None:
     if (target / "vllm").exists():
         add_pythonpath(target)
         patch_vllm_tilelang_probe(target)
+        patch_vllm_flashinfer_probe(target)
     try:
         current = importlib_metadata.version("vllm")
     except importlib_metadata.PackageNotFoundError:
@@ -83,6 +84,7 @@ def ensure_vllm_pin(args: argparse.Namespace) -> None:
     expected = args.vllm_version_fragment
     if current and expected in current and not args.force_reinstall_vllm:
         patch_vllm_tilelang_probe(target)
+        patch_vllm_flashinfer_probe(target)
         print(f"vllm_pin=current_ok version={current}")
         return
 
@@ -108,6 +110,7 @@ def ensure_vllm_pin(args: argparse.Namespace) -> None:
     subprocess.check_call(command)
     add_pythonpath(target)
     patch_vllm_tilelang_probe(target)
+    patch_vllm_flashinfer_probe(target)
     try:
         installed = importlib_metadata.version("vllm")
     except importlib_metadata.PackageNotFoundError:
@@ -144,6 +147,33 @@ def patch_vllm_tilelang_probe(target: Path) -> None:
     print(f"vllm_tilelang_patch=applied path={import_utils}", flush=True)
 
 
+def patch_vllm_flashinfer_probe(target: Path) -> None:
+    flashinfer_utils = target / "vllm" / "utils" / "flashinfer.py"
+    if not flashinfer_utils.exists():
+        return
+    text = flashinfer_utils.read_text()
+    if "VLLM_BENCH_DISABLE_FLASHINFER" in text:
+        return
+    pattern = (
+        r"@functools\.cache\n"
+        r"def has_flashinfer\(\) -> bool:\n"
+        r"    \"\"\"Return `True` if flashinfer-python package is available\.\"\"\"\n"
+    )
+    replacement = (
+        "@functools.cache\n"
+        "def has_flashinfer() -> bool:\n"
+        "    \"\"\"Return `True` if flashinfer-python package is available.\"\"\"\n"
+        "    if os.environ.get(\"VLLM_BENCH_DISABLE_FLASHINFER\", \"1\").lower() not in {\"0\", \"false\", \"no\", \"off\"}:\n"
+        "        return False\n"
+    )
+    patched, count = re.subn(pattern, replacement, text)
+    if count != 1:
+        print(f"vllm_flashinfer_patch=skipped path={flashinfer_utils} pattern_count={count}", flush=True)
+        return
+    flashinfer_utils.write_text(patched)
+    print(f"vllm_flashinfer_patch=applied path={flashinfer_utils}", flush=True)
+
+
 def add_src_to_path(src_dir: Path) -> None:
     src_text = str(src_dir.resolve())
     add_pythonpath(Path(src_text))
@@ -169,6 +199,7 @@ def apply_vllm_env(args: argparse.Namespace) -> None:
     else:
         os.environ.pop("VLLM_DISABLED_KERNELS", None)
     os.environ["VLLM_BENCH_DISABLE_TILELANG"] = "1" if args.disable_tilelang else "0"
+    os.environ["VLLM_BENCH_DISABLE_FLASHINFER"] = "1" if args.disable_flashinfer else "0"
     os.environ["VLLM_USE_DEEP_GEMM"] = "1" if args.use_deep_gemm else "0"
 
 
@@ -684,6 +715,12 @@ def parse_args() -> argparse.Namespace:
         help="Patch the isolated vLLM target so optional TileLang kernels are unavailable.",
     )
     parser.add_argument(
+        "--disable-flashinfer",
+        type=str_to_bool,
+        default=True,
+        help="Patch the isolated vLLM target so FlashInfer kernels/samplers are unavailable.",
+    )
+    parser.add_argument(
         "--use-deep-gemm",
         type=str_to_bool,
         default=False,
@@ -751,6 +788,7 @@ def main() -> int:
             "ignore_eos": args.ignore_eos,
             "vllm_wheel_url": args.vllm_wheel_url if args.install_vllm_wheel else None,
             "vllm_disabled_kernels": os.environ.get("VLLM_DISABLED_KERNELS"),
+            "vllm_disable_flashinfer": os.environ.get("VLLM_BENCH_DISABLE_FLASHINFER"),
             "vllm_use_deep_gemm": os.environ.get("VLLM_USE_DEEP_GEMM"),
         },
         sort_keys=True,
