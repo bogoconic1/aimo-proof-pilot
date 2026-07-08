@@ -1906,6 +1906,7 @@ def remove_incompatible_prime_rl_config_package() -> None:
             "-c",
             "import pydantic_config; raise SystemExit(0 if hasattr(pydantic_config, 'BaseConfig') else 1)",
         ],
+        cwd=stable_subprocess_cwd(),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -1923,6 +1924,7 @@ def remove_incompatible_prime_rl_config_package() -> None:
             "pydantic-config",
             "--break-system-packages",
         ],
+        cwd=stable_subprocess_cwd(),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -2086,6 +2088,18 @@ def remove_protected_runtime_overlay_packages(site_dir: Path) -> None:
         )
 
 
+def stable_subprocess_cwd(cwd: Path | None = None, *, fallback: Path | None = None) -> str:
+    for candidate in (cwd, fallback, Path(os.environ.get("TMPDIR", "/tmp")), Path("/")):
+        if candidate is None:
+            continue
+        try:
+            if candidate.is_dir():
+                return str(candidate)
+        except OSError:
+            continue
+    return "/"
+
+
 def install_python_target(source: Path | str, site_dir: Path, label: str, *, no_deps: bool = True) -> None:
     site_dir.mkdir(parents=True, exist_ok=True)
     if "github.com" in str(source):
@@ -2112,7 +2126,14 @@ def install_python_target(source: Path | str, site_dir: Path, label: str, *, no_
         command.insert(command.index("--target"), "--no-deps")
     mode = "without dependency resolution" if no_deps else "with dependency resolution"
     log(f"Installing runtime {label} into {site_dir} {mode}")
-    process = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    process = subprocess.run(
+        command,
+        cwd=stable_subprocess_cwd(fallback=site_dir),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
     if process.returncode != 0:
         raise RuntimeError(
             f"Runtime {label} install failed with exit code {process.returncode}.\n"
@@ -2169,7 +2190,7 @@ def install_python_global_requirements(
     log(f"Installing global runtime {label} requirements{mode}: {' '.join(requirements)}")
     process = subprocess.run(
         command,
-        cwd=str(cwd) if cwd else None,
+        cwd=stable_subprocess_cwd(cwd),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -2191,6 +2212,7 @@ def configure_git_https_rewrites_for_runtime_installs() -> None:
     for key, value in rewrites:
         existing = subprocess.run(
             ["git", "config", "--global", "--get-all", key],
+            cwd=stable_subprocess_cwd(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -2199,6 +2221,7 @@ def configure_git_https_rewrites_for_runtime_installs() -> None:
             continue
         process = subprocess.run(
             ["git", "config", "--global", "--add", key, value],
+            cwd=stable_subprocess_cwd(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -2255,7 +2278,7 @@ def install_python_requirements(
     )
     process = subprocess.run(
         command,
-        cwd=str(cwd) if cwd else None,
+        cwd=stable_subprocess_cwd(cwd, fallback=site_dir),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
