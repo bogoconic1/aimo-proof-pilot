@@ -73,8 +73,8 @@ export PRIME_RL_PREFILL_HIDDEN_CONCURRENCY="${PRIME_RL_PREFILL_HIDDEN_CONCURRENC
 export PRIME_RL_RUNTIME_INSTALL_VLLM="${PRIME_RL_RUNTIME_INSTALL_VLLM:-0}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
-POLICY_VLLM_EXTRA_DEFAULT='{"kv_cache_dtype":"fp8","block_size":256,"disable_custom_all_reduce":true,"compilation_config":{"cudagraph_mode":"FULL_DECODE_ONLY","cudagraph_capture_sizes":[1,2,4,8,16],"pass_config":{"fuse_allreduce_rms":false}}}'
-TEACHER_VLLM_EXTRA_DEFAULT='{"kv_cache_dtype":"fp8","block_size":256,"enable_expert_parallel":true,"linear_backend":"deep_gemm","attention_config":{"backend":"FLASHINFER_MLA_SPARSE_DSV4"},"disable_custom_all_reduce":true,"compilation_config":{"cudagraph_mode":"FULL_DECODE_ONLY","cudagraph_capture_sizes":[1,2,4,8,16],"pass_config":{"fuse_allreduce_rms":false}}}'
+POLICY_VLLM_EXTRA_DEFAULT='{"kv_cache_dtype":"fp8","block_size":256,"disable_custom_all_reduce":true}'
+TEACHER_VLLM_EXTRA_DEFAULT='{"kv_cache_dtype":"fp8","block_size":256,"enable_expert_parallel":true,"linear_backend":"deep_gemm","attention_config":{"backend":"FLASHINFER_MLA_SPARSE_DSV4"},"disable_custom_all_reduce":true}'
 
 RENDEZVOUS_DIR="${PRIME_3NODE_RENDEZVOUS_DIR:-/tmp/prime_rl_opd_3node/${RUN_NAME}}"
 mkdir -p "${RENDEZVOUS_DIR}"
@@ -322,10 +322,8 @@ COMMON_ARGS=(
 case "${PRIME_COMPONENT_ROLE}" in
   policy_inference)
     export OLMO_RUN_DIR_NAME="${RUN_NAME}_policy_node${NODE_LABEL}"
-    # vLLM 0.23/0.24 can choose FlashInfer MNNVL fused allreduce+RMSNorm during
-    # cudagraph profiling for this OLMo3Sink policy. Run TP=2,DP=4 by default:
-    # four 2-GPU policy instances on node4 reduce small-model communication cost
-    # while still using all 8 GPUs.
+    # Run TP=2,DP=4 by default: four 2-GPU policy instances on node4 reduce
+    # small-model communication cost while still using all 8 GPUs.
     export VLLM_FLASHINFER_ALLREDUCE_BACKEND="${PRIME_VLLM_FLASHINFER_ALLREDUCE_BACKEND:-trtllm}"
     export VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE="${PRIME_VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE:-2147483648}"
     exec "${TRAIN_PY_ENV[@]}" /usr/bin/python /app/train.py "${COMMON_ARGS[@]}" \
