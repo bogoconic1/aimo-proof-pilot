@@ -2,10 +2,10 @@
 """Benchmark OLMo3Sink generation throughput with vLLM offline inference.
 
 Default workload:
-  - 1 GPU
-  - 8 concurrent prompts
+  - 8 GPUs as vLLM data parallel ranks (`TP=1, DP=8`)
+  - 16 concurrent prompts
   - about 1,024 prompt tokens per request
-  - 131,072 total requested output tokens (16,384 per request)
+  - 131,072 total requested output tokens (8,192 per request)
 
 If you need 128k output tokens *per request*, pass
 `--max-tokens-per-request 128000 --max-model-len 131072`.
@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata as importlib_metadata
 import inspect
 import json
+import multiprocessing as mp
 import os
+import socket
 import statistics
 import subprocess
 import sys
@@ -25,6 +28,13 @@ import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+
+DEFAULT_VLLM_RUNTIME_WHEEL_URL = (
+    "https://wheels.vllm.ai/f5a8d73377d0f0a4e00cba172f9fbd0d50471b07/"
+    "vllm-0.23.1rc1.dev699%2Bgf5a8d7337-cp38-abi3-manylinux_2_28_x86_64.whl"
+)
+DEFAULT_VLLM_VERSION_FRAGMENT = "0.23.1rc1.dev699+gf5a8d7337"
 
 
 def str_to_bool(value: str | bool) -> bool:
@@ -53,6 +63,46 @@ def parse_json_object(raw: str | None) -> dict[str, Any]:
 
 def repo_root_from_script() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def ensure_vllm_pin(args: argparse.Namespace) -> None:
+    if not args.install_vllm_wheel:
+        return
+    try:
+        current = importlib_metadata.version("vllm")
+    except importlib_metadata.PackageNotFoundError:
+        current = None
+
+    expected = args.vllm_version_fragment
+    if current and expected in current and not args.force_reinstall_vllm:
+        print(f"vllm_pin=current_ok version={current}")
+        return
+
+    print(
+        "vllm_pin=installing "
+        f"current={current!r} expected_fragment={expected!r} wheel={args.vllm_wheel_url}",
+        flush=True,
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--no-input",
+        "--no-cache-dir",
+        "--no-deps",
+        "--force-reinstall",
+        "--break-system-packages",
+        args.vllm_wheel_url,
+    ]
+    subprocess.check_call(command)
+    importlib_metadata.Distribution.discover.cache_clear() if hasattr(importlib_metadata.Distribution.discover, "cache_clear") else None
+    try:
+        installed = importlib_metadata.version("vllm")
+    except importlib_metadata.PackageNotFoundError:
+        installed = "missing"
+    print(f"vllm_pin=installed version={installed}", flush=True)
 
 
 def add_src_to_path(src_dir: Path) -> None:
@@ -140,6 +190,12 @@ def install_vllm_plugin_shim(src_dir: Path) -> None:
             os.environ["PYTHONPATH"] = plugin_text + os.pathsep + existing
     else:
         os.environ["PYTHONPATH"] = plugin_text
+    allowed_plugins = os.environ.get("VLLM_PLUGINS")
+    if allowed_plugins is not None:
+        names = [name.strip() for name in allowed_plugins.split(",") if name.strip()]
+        if "olmo3sink_bench" not in names:
+            names.append("olmo3sink_bench")
+            os.environ["VLLM_PLUGINS"] = ",".join(names)
 
 
 def tokenizer_len(tokenizer: Any, text: str) -> int:
@@ -215,6 +271,12 @@ def nvidia_smi_snapshot() -> str:
         return f"nvidia-smi unavailable: {exc}"
 
 
+def get_open_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 def sampling_params_kwargs(args: argparse.Namespace, max_tokens: int) -> dict[str, Any]:
     from vllm import SamplingParams
 
@@ -274,101 +336,15 @@ def run_generate(llm: Any, prompts: list[str], sampling_params: Any) -> tuple[li
     return outputs, seconds
 
 
-def summarize_outputs(outputs: list[Any]) -> dict[str, Any]:
-    output_lens = [len(item.outputs[0].token_ids) for item in outputs]
-    finish_reasons = Counter(str(item.outputs[0].finish_reason) for item in outputs)
-    return {
-        "num_outputs": len(outputs),
-        "output_tokens_total": sum(output_lens),
-        "output_tokens_min": min(output_lens) if output_lens else 0,
-        "output_tokens_max": max(output_lens) if output_lens else 0,
-        "output_tokens_mean": statistics.mean(output_lens) if output_lens else 0.0,
-        "finish_reasons": dict(sorted(finish_reasons.items())),
-    }
-
-
-def parse_args() -> argparse.Namespace:
-    default_src = repo_root_from_script() / "src"
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--model", required=True, help="OLMo3Sink HF checkpoint path or repo id.")
-    parser.add_argument("--tokenizer", default=None, help="Tokenizer path. Defaults to --model.")
-    parser.add_argument("--olmo3sink-src", default=str(default_src), help="Path containing the olmo3_sink package.")
-    parser.add_argument("--skip-olmo3sink-register", action="store_true", help="Skip local OLMo3Sink/vLLM registration.")
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--prompt-tokens", type=int, default=1024)
-    parser.add_argument("--total-output-tokens", type=int, default=131072)
-    parser.add_argument("--max-tokens-per-request", type=int, default=None)
-    parser.add_argument("--max-model-len", type=int, default=None)
-    parser.add_argument("--max-num-seqs", type=int, default=None)
-    parser.add_argument("--max-num-batched-tokens", type=int, default=None)
-    parser.add_argument("--tensor-parallel-size", type=int, default=1)
-    parser.add_argument("--dtype", default="bfloat16")
-    parser.add_argument("--tokenizer-mode", default="auto")
-    parser.add_argument("--kv-cache-dtype", default="fp8")
-    parser.add_argument("--block-size", type=int, default=256)
-    parser.add_argument("--quantization", default=None)
-    parser.add_argument("--gpu-memory-utilization", type=float, default=0.95)
-    parser.add_argument("--enforce-eager", type=str_to_bool, default=False)
-    parser.add_argument("--disable-custom-all-reduce", type=str_to_bool, default=None)
-    parser.add_argument("--trust-remote-code", type=str_to_bool, default=True)
-    parser.add_argument("--temperature", type=float, default=0.7)
-    parser.add_argument("--top-p", type=float, default=0.95)
-    parser.add_argument("--ignore-eos", type=str_to_bool, default=True)
-    parser.add_argument("--force-max-tokens", type=str_to_bool, default=True)
-    parser.add_argument("--warmup-tokens", type=int, default=32)
-    parser.add_argument("--rounds", type=int, default=1)
-    parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--disable-log-stats", type=str_to_bool, default=True)
-    parser.add_argument("--vllm-extra-json", default=None, help="Extra JSON object merged into vLLM LLM kwargs.")
-    parser.add_argument("--out-json", default=None, help="Optional path for benchmark metrics JSON.")
-    parser.add_argument("--print-preview-chars", type=int, default=500)
-    return parser.parse_args()
-
-
-def main() -> int:
-    args = parse_args()
-    if args.batch_size <= 0:
-        raise ValueError("--batch-size must be positive")
-    if args.rounds <= 0:
-        raise ValueError("--rounds must be positive")
-
-    register_olmo3sink(Path(args.olmo3sink_src), args.skip_olmo3sink_register)
-
-    from transformers import AutoTokenizer
+def run_single_process_benchmark(
+    args: argparse.Namespace,
+    prompts: list[str],
+    prompt_lens: list[int],
+    max_tokens: int,
+    max_model_len: int,
+    max_num_batched_tokens: int,
+) -> dict[str, Any]:
     from vllm import SamplingParams
-
-    tokenizer_path = args.tokenizer or args.model
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=args.trust_remote_code)
-    prompts: list[str] = []
-    prompt_lens: list[int] = []
-    for idx in range(args.batch_size):
-        prompt, length = build_target_prompt(tokenizer, args.prompt_tokens, idx)
-        prompts.append(prompt)
-        prompt_lens.append(length)
-
-    max_tokens = args.max_tokens_per_request
-    if max_tokens is None:
-        max_tokens = round_up(args.total_output_tokens, args.batch_size) // args.batch_size
-    max_model_len = args.max_model_len or round_up(max(prompt_lens) + max_tokens + 256, 1024)
-    max_num_batched_tokens = args.max_num_batched_tokens or round_up(max(prompt_lens) * args.batch_size, 1024)
-
-    print("benchmark_config=" + json.dumps(
-        {
-            "batch_size": args.batch_size,
-            "prompt_tokens_min": min(prompt_lens),
-            "prompt_tokens_max": max(prompt_lens),
-            "requested_max_tokens_per_request": max_tokens,
-            "requested_output_tokens_total": max_tokens * args.batch_size,
-            "max_model_len": max_model_len,
-            "max_num_batched_tokens": max_num_batched_tokens,
-            "tensor_parallel_size": args.tensor_parallel_size,
-            "kv_cache_dtype": args.kv_cache_dtype,
-            "force_max_tokens": args.force_max_tokens,
-            "ignore_eos": args.ignore_eos,
-        },
-        sort_keys=True,
-    ))
-    print("nvidia_smi_before=\n" + nvidia_smi_snapshot())
 
     llm, load_seconds, llm_kwargs = init_llm(args, max_model_len, max_num_batched_tokens)
 
@@ -396,7 +372,7 @@ def main() -> int:
             "total_tokens": total_prompt_tokens + total_output_tokens,
             "decode_tokens_per_second": total_output_tokens / seconds if seconds > 0 else 0.0,
             "decode_tokens_per_second_per_request": (
-                total_output_tokens / seconds / args.batch_size if seconds > 0 else 0.0
+                total_output_tokens / seconds / len(prompts) if seconds > 0 and prompts else 0.0
             ),
             "end_to_end_tokens_per_second": (
                 (total_prompt_tokens + total_output_tokens) / seconds if seconds > 0 else 0.0
@@ -408,6 +384,290 @@ def main() -> int:
         preview = outputs[0].outputs[0].text[: args.print_preview_chars]
         if preview:
             print(f"round_{round_idx}_first_output_preview={preview!r}")
+    return {
+        "load_seconds": load_seconds,
+        "llm_kwargs": llm_kwargs,
+        "rounds": round_metrics,
+    }
+
+
+def rank_bounds(total: int, rank: int, size: int) -> tuple[int, int]:
+    floor = total // size
+    remainder = total % size
+    start = rank * floor + min(rank, remainder)
+    end = start + floor + (1 if rank < remainder else 0)
+    return start, end
+
+
+def run_dp_rank(
+    args_dict: dict[str, Any],
+    prompts: list[str],
+    prompt_lens: list[int],
+    max_tokens: int,
+    max_model_len: int,
+    dp_rank: int,
+    dp_size: int,
+    dp_master_ip: str,
+    dp_master_port: int,
+    metrics_dir: str,
+) -> None:
+    args = argparse.Namespace(**args_dict)
+    os.environ["VLLM_DP_RANK"] = str(dp_rank)
+    os.environ["VLLM_DP_RANK_LOCAL"] = str(dp_rank)
+    os.environ["VLLM_DP_SIZE"] = str(dp_size)
+    os.environ["VLLM_DP_MASTER_IP"] = dp_master_ip
+    os.environ["VLLM_DP_MASTER_PORT"] = str(dp_master_port)
+
+    start, end = rank_bounds(len(prompts), dp_rank, dp_size)
+    local_prompts = prompts[start:end] or ["Placeholder"]
+    local_lens = prompt_lens[start:end] or [1]
+    args.batch_size = len(local_prompts)
+    args.max_num_seqs = args.max_num_seqs or len(local_prompts)
+    local_batched_tokens = args.max_num_batched_tokens or round_up(max(local_lens) * len(local_prompts), 1024)
+
+    register_olmo3sink(Path(args.olmo3sink_src), args.skip_olmo3sink_register)
+    print(
+        "dp_rank_start="
+        + json.dumps(
+            {
+                "rank": dp_rank,
+                "dp_size": dp_size,
+                "prompt_start": start,
+                "prompt_end": end,
+                "num_prompts": len(local_prompts),
+                "max_num_batched_tokens": local_batched_tokens,
+                "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    rank_started = time.perf_counter()
+    result = run_single_process_benchmark(
+        args,
+        local_prompts,
+        local_lens,
+        max_tokens,
+        max_model_len,
+        local_batched_tokens,
+    )
+    result["rank"] = dp_rank
+    result["rank_wall_seconds"] = time.perf_counter() - rank_started
+    result["prompt_indices"] = [start, end]
+    out_path = Path(metrics_dir) / f"rank_{dp_rank}.json"
+    out_path.write_text(json.dumps(result, indent=2, sort_keys=True))
+    print(f"dp_rank_done rank={dp_rank} metrics={out_path}", flush=True)
+
+
+def run_data_parallel_benchmark(
+    args: argparse.Namespace,
+    prompts: list[str],
+    prompt_lens: list[int],
+    max_tokens: int,
+    max_model_len: int,
+) -> dict[str, Any]:
+    dp_size = args.data_parallel_size
+    metrics_dir = Path(args.dp_output_dir or f"/tmp/olmo3sink_vllm_dp_metrics_{int(time.time())}")
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    dp_master_port = args.dp_master_port or get_open_port()
+    dp_master_ip = args.dp_master_ip
+    args_dict = vars(args).copy()
+
+    ctx = mp.get_context("spawn")
+    procs: list[mp.Process] = []
+    started = time.perf_counter()
+    for rank in range(dp_size):
+        proc = ctx.Process(
+            target=run_dp_rank,
+            args=(
+                args_dict,
+                prompts,
+                prompt_lens,
+                max_tokens,
+                max_model_len,
+                rank,
+                dp_size,
+                dp_master_ip,
+                dp_master_port,
+                str(metrics_dir),
+            ),
+        )
+        proc.start()
+        procs.append(proc)
+
+    exit_code = 0
+    for proc in procs:
+        proc.join(args.dp_timeout_seconds)
+        if proc.exitcode is None:
+            print(f"dp_rank_timeout pid={proc.pid}; killing after {args.dp_timeout_seconds}s", flush=True)
+            proc.kill()
+            exit_code = 1
+        elif proc.exitcode:
+            print(f"dp_rank_failed pid={proc.pid} exitcode={proc.exitcode}", flush=True)
+            exit_code = proc.exitcode
+    wall_seconds = time.perf_counter() - started
+    if exit_code:
+        raise RuntimeError(f"At least one DP rank failed; metrics_dir={metrics_dir}")
+
+    per_rank = []
+    for rank in range(dp_size):
+        per_rank.append(json.loads((metrics_dir / f"rank_{rank}.json").read_text()))
+    output_total = 0
+    prompt_total = sum(prompt_lens)
+    for item in per_rank:
+        for round_item in item.get("rounds", []):
+            output_total += int(round_item.get("output_tokens_total", 0))
+    aggregate = {
+        "data_parallel_size": dp_size,
+        "wall_seconds": wall_seconds,
+        "prompt_tokens_total": prompt_total,
+        "output_tokens_total": output_total,
+        "total_tokens": prompt_total + output_total,
+        "decode_tokens_per_second": output_total / wall_seconds if wall_seconds > 0 else 0.0,
+        "decode_tokens_per_second_per_request": (
+            output_total / wall_seconds / len(prompts) if wall_seconds > 0 and prompts else 0.0
+        ),
+        "end_to_end_tokens_per_second": (
+            (prompt_total + output_total) / wall_seconds if wall_seconds > 0 else 0.0
+        ),
+        "metrics_dir": str(metrics_dir),
+        "per_rank": per_rank,
+    }
+    print("dp_aggregate_metrics=" + json.dumps(aggregate, sort_keys=True))
+    return aggregate
+
+
+def summarize_outputs(outputs: list[Any]) -> dict[str, Any]:
+    output_lens = [len(item.outputs[0].token_ids) for item in outputs]
+    finish_reasons = Counter(str(item.outputs[0].finish_reason) for item in outputs)
+    return {
+        "num_outputs": len(outputs),
+        "output_tokens_total": sum(output_lens),
+        "output_tokens_min": min(output_lens) if output_lens else 0,
+        "output_tokens_max": max(output_lens) if output_lens else 0,
+        "output_tokens_mean": statistics.mean(output_lens) if output_lens else 0.0,
+        "finish_reasons": dict(sorted(finish_reasons.items())),
+    }
+
+
+def parse_args() -> argparse.Namespace:
+    default_src = repo_root_from_script() / "src"
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("--model", required=True, help="OLMo3Sink HF checkpoint path or repo id.")
+    parser.add_argument("--tokenizer", default=None, help="Tokenizer path. Defaults to --model.")
+    parser.add_argument("--olmo3sink-src", default=str(default_src), help="Path containing the olmo3_sink package.")
+    parser.add_argument("--skip-olmo3sink-register", action="store_true", help="Skip local OLMo3Sink/vLLM registration.")
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--prompt-tokens", type=int, default=1024)
+    parser.add_argument("--total-output-tokens", type=int, default=131072)
+    parser.add_argument("--max-tokens-per-request", type=int, default=None)
+    parser.add_argument("--max-model-len", type=int, default=None)
+    parser.add_argument("--max-num-seqs", type=int, default=None)
+    parser.add_argument("--max-num-batched-tokens", type=int, default=None)
+    parser.add_argument("--tensor-parallel-size", type=int, default=1)
+    parser.add_argument("--data-parallel-size", type=int, default=8)
+    parser.add_argument("--dp-master-ip", default="127.0.0.1")
+    parser.add_argument("--dp-master-port", type=int, default=0)
+    parser.add_argument("--dp-timeout-seconds", type=int, default=7200)
+    parser.add_argument("--dp-output-dir", default=None)
+    parser.add_argument("--dtype", default="bfloat16")
+    parser.add_argument("--tokenizer-mode", default="auto")
+    parser.add_argument("--kv-cache-dtype", default="fp8")
+    parser.add_argument("--block-size", type=int, default=256)
+    parser.add_argument("--quantization", default=None)
+    parser.add_argument("--gpu-memory-utilization", type=float, default=0.95)
+    parser.add_argument("--enforce-eager", type=str_to_bool, default=False)
+    parser.add_argument("--disable-custom-all-reduce", type=str_to_bool, default=None)
+    parser.add_argument("--trust-remote-code", type=str_to_bool, default=True)
+    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--top-p", type=float, default=0.95)
+    parser.add_argument("--ignore-eos", type=str_to_bool, default=True)
+    parser.add_argument("--force-max-tokens", type=str_to_bool, default=True)
+    parser.add_argument("--warmup-tokens", type=int, default=32)
+    parser.add_argument("--rounds", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--disable-log-stats", type=str_to_bool, default=True)
+    parser.add_argument("--vllm-extra-json", default=None, help="Extra JSON object merged into vLLM LLM kwargs.")
+    parser.add_argument("--install-vllm-wheel", type=str_to_bool, default=True)
+    parser.add_argument("--force-reinstall-vllm", type=str_to_bool, default=False)
+    parser.add_argument("--vllm-wheel-url", default=DEFAULT_VLLM_RUNTIME_WHEEL_URL)
+    parser.add_argument("--vllm-version-fragment", default=DEFAULT_VLLM_VERSION_FRAGMENT)
+    parser.add_argument("--out-json", default=None, help="Optional path for benchmark metrics JSON.")
+    parser.add_argument("--print-preview-chars", type=int, default=500)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    if args.batch_size <= 0:
+        raise ValueError("--batch-size must be positive")
+    if args.rounds <= 0:
+        raise ValueError("--rounds must be positive")
+    if args.data_parallel_size <= 0:
+        raise ValueError("--data-parallel-size must be positive")
+    if args.batch_size < args.data_parallel_size:
+        raise ValueError("--batch-size should be >= --data-parallel-size so every DP rank gets work")
+
+    ensure_vllm_pin(args)
+
+    from transformers import AutoTokenizer
+
+    tokenizer_path = args.tokenizer or args.model
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=args.trust_remote_code)
+    prompts: list[str] = []
+    prompt_lens: list[int] = []
+    for idx in range(args.batch_size):
+        prompt, length = build_target_prompt(tokenizer, args.prompt_tokens, idx)
+        prompts.append(prompt)
+        prompt_lens.append(length)
+
+    max_tokens = args.max_tokens_per_request
+    if max_tokens is None:
+        max_tokens = round_up(args.total_output_tokens, args.batch_size) // args.batch_size
+    max_model_len = args.max_model_len or round_up(max(prompt_lens) + max_tokens + 256, 1024)
+    max_num_batched_tokens = args.max_num_batched_tokens or round_up(max(prompt_lens) * args.batch_size, 1024)
+
+    print("benchmark_config=" + json.dumps(
+        {
+            "batch_size": args.batch_size,
+            "prompt_tokens_min": min(prompt_lens),
+            "prompt_tokens_max": max(prompt_lens),
+            "requested_max_tokens_per_request": max_tokens,
+            "requested_output_tokens_total": max_tokens * args.batch_size,
+            "max_model_len": max_model_len,
+            "max_num_batched_tokens": max_num_batched_tokens,
+            "tensor_parallel_size": args.tensor_parallel_size,
+            "data_parallel_size": args.data_parallel_size,
+            "kv_cache_dtype": args.kv_cache_dtype,
+            "quantization": args.quantization,
+            "force_max_tokens": args.force_max_tokens,
+            "ignore_eos": args.ignore_eos,
+            "vllm_wheel_url": args.vllm_wheel_url if args.install_vllm_wheel else None,
+        },
+        sort_keys=True,
+    ))
+    print("nvidia_smi_before=\n" + nvidia_smi_snapshot())
+
+    if args.data_parallel_size > 1:
+        add_src_to_path(Path(args.olmo3sink_src))
+        install_vllm_plugin_shim(Path(args.olmo3sink_src))
+        result = run_data_parallel_benchmark(args, prompts, prompt_lens, max_tokens, max_model_len)
+        round_metrics = [result]
+        load_seconds = None
+        llm_kwargs = None
+    else:
+        register_olmo3sink(Path(args.olmo3sink_src), args.skip_olmo3sink_register)
+        result = run_single_process_benchmark(
+            args,
+            prompts,
+            prompt_lens,
+            max_tokens,
+            max_model_len,
+            max_num_batched_tokens,
+        )
+        round_metrics = result["rounds"]
+        load_seconds = result["load_seconds"]
+        llm_kwargs = result["llm_kwargs"]
 
     print("nvidia_smi_after=\n" + nvidia_smi_snapshot())
     final = {
@@ -417,6 +677,7 @@ def main() -> int:
         "prompt_tokens": prompt_lens,
         "max_tokens_per_request": max_tokens,
         "llm_kwargs": llm_kwargs,
+        "data_parallel_size": args.data_parallel_size,
         "rounds": round_metrics,
     }
     if args.out_json:

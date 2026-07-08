@@ -31,34 +31,37 @@ The command filename is historical; the current default in that script is a 20,4
 
 ## vLLM OLMo3Sink Speed Benchmark
 
-Use this when asking a host to estimate rollout generation speed on their hardware. It runs vLLM offline inference, registers the local OLMo3Sink adapter, creates eight roughly 1k-token prompts, and requests 128k total output tokens by default.
+Use this when asking a host to estimate rollout generation speed on their hardware. It runs vLLM offline inference, pins vLLM to the known-good 0.23.1rc1 wheel by default, registers the local OLMo3Sink adapter, creates sixteen roughly 1k-token prompts, and requests 128k total output tokens by default. The default topology is `TP=1, DP=8`, so each DP rank handles two requests.
 
 ```bash
 python scripts/bench_vllm_olmo3sink_speed.py \
   --model /path/to/opd-32b-v33-s150 \
-  --batch-size 8 \
+  --batch-size 16 \
   --prompt-tokens 1024 \
   --total-output-tokens 131072 \
   --tensor-parallel-size 1 \
+  --data-parallel-size 8 \
   --gpu-memory-utilization 0.95 \
   --kv-cache-dtype fp8 \
   --block-size 256 \
+  --quantization fp8 \
   --out-json /tmp/olmo3sink_vllm_bench.json
 ```
 
-This default means 16,384 generated tokens per request. For a heavier 128k-per-request test, use:
+This default means 8,192 generated tokens per request. For a heavier 128k-per-request test, use:
 
 ```bash
 python scripts/bench_vllm_olmo3sink_speed.py \
   --model /path/to/opd-32b-v33-s150 \
-  --batch-size 8 \
+  --batch-size 16 \
   --prompt-tokens 1024 \
   --max-tokens-per-request 128000 \
   --max-model-len 131072 \
-  --tensor-parallel-size 1
+  --tensor-parallel-size 1 \
+  --data-parallel-size 8
 ```
 
-The script prints engine load time, actual prompt/output token counts, finish reasons, total decode tokens per second, per-request decode tokens per second, and `nvidia-smi` snapshots.
+The script prints engine load time, actual prompt/output token counts, finish reasons, total decode tokens per second, per-request decode tokens per second, per-DP-rank metrics, aggregate DP throughput, and `nvidia-smi` snapshots.
 
 ## Current Best OPD Pipeline: 4xH200, 20k Context
 
