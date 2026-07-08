@@ -43,6 +43,12 @@ def parse_extra_json(value: str | None) -> dict[str, Any]:
     return loaded
 
 
+def parse_csv_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [part.strip() for part in str(value).split(",") if part.strip()]
+
+
 def normalize_optional_choice(value: str | None) -> str | None:
     if value is None:
         return None
@@ -522,11 +528,13 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
     policy_client_config: dict[str, Any] = {
         "skip_model_check": args.prime_skip_model_check,
     }
-    if args.prime_policy_base_url:
-        policy_client_config["base_url"] = [args.prime_policy_base_url]
+    policy_base_urls = parse_csv_list(args.prime_policy_base_url)
+    if policy_base_urls:
+        policy_client_config["base_url"] = policy_base_urls
         policy_client_config["dp_rank_count"] = args.prime_policy_dp_rank_count or args.prime_vllm_data_parallel_size
-    if args.prime_policy_admin_base_url:
-        policy_client_config["admin_base_url"] = [args.prime_policy_admin_base_url]
+    policy_admin_base_urls = parse_csv_list(args.prime_policy_admin_base_url)
+    if policy_admin_base_urls:
+        policy_client_config["admin_base_url"] = policy_admin_base_urls
 
     include_local_inference = args.prime_component == "full" and args.prime_infer_gpus > 0
 
@@ -1105,12 +1113,18 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--prime_policy_base_url",
         default=None,
-        help="External policy inference base URL for trainer_orchestrator mode, e.g. http://host:8000/v1.",
+        help=(
+            "External policy inference base URL(s) for trainer_orchestrator mode, "
+            "e.g. http://host:8000/v1 or comma-separated URLs for multiple policy nodes."
+        ),
     )
     parser.add_argument(
         "--prime_policy_admin_base_url",
         default=None,
-        help="Optional external policy admin base URL. Defaults to policy base URL inside Prime-RL when unset.",
+        help=(
+            "Optional external policy admin base URL(s). Defaults to policy base URL(s) "
+            "inside Prime-RL when unset."
+        ),
     )
     parser.add_argument("--prime_policy_dp_rank_count", type=int, default=None)
     parser.add_argument(
@@ -1266,9 +1280,10 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--prime_policy_base_url is required for --prime_component trainer_orchestrator")
         if args.prime_algorithm == "opd" and not args.prime_opd_teacher_base_url:
             raise ValueError("--prime_opd_teacher_base_url is required for OPD trainer_orchestrator mode")
-        policy_ready_url = args.prime_policy_base_url.rstrip("/") + "/models"
         policy_timeout = int(os.environ.get("PRIME_POLICY_READY_TIMEOUT", "7200"))
-        wait_for_external_http_ready(policy_ready_url, label="policy inference", timeout_s=policy_timeout)
+        for policy_base_url in parse_csv_list(args.prime_policy_base_url):
+            policy_ready_url = policy_base_url.rstrip("/") + "/models"
+            wait_for_external_http_ready(policy_ready_url, label=f"policy inference {policy_base_url}", timeout_s=policy_timeout)
         if args.prime_algorithm == "opd":
             teacher_ready_url = args.prime_opd_teacher_base_url.rstrip("/") + "/models"
             teacher_timeout = int(os.environ.get("PRIME_TEACHER_READY_TIMEOUT", str(args.prime_opd_teacher_ready_timeout)))

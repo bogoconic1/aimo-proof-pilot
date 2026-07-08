@@ -1,24 +1,66 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Standalone 3-node Prime-RL OPD run for the 6-node operator cluster.
-# Nodes 0,1,2 are reserved for teammates and exit immediately.
-# Node 3: trainer + orchestrator, 8 GPUs
-# Node 4: student/policy vLLM rollout, 8 GPUs
-# Node 5: DeepSeek-V4-Flash teacher vLLM hidden-state scorer, 8 GPUs
+# Standalone multi-node Prime-RL OPD run for the 6-node operator cluster.
+# Default full-cluster layout:
+#   Node 0: trainer + orchestrator, 8 GPUs
+#   Nodes 1,2,3,4: student/policy vLLM rollout, 8 GPUs each
+#   Node 5: DeepSeek-V4-Flash teacher vLLM hidden-state scorer, 8 GPUs
+#
+# To restore the older 3-node layout, set PRIME_NODE_LAYOUT=3node:
+#   Node 3: trainer, node 4: policy, node 5: teacher.
+# The explicit PRIME_TRAIN_NODE, PRIME_POLICY_NODES, and PRIME_TEACHER_NODE
+# variables override both layouts.
 
 NODE_LABEL="${GLOBAL_RANK:-${NODE_RANK:-${SLURM_NODEID:-${RANK:-none}}}}"
-case "${NODE_LABEL}" in
-  3) PRIME_COMPONENT_ROLE="trainer_orchestrator" ;;
-  4) PRIME_COMPONENT_ROLE="policy_inference" ;;
-  5) PRIME_COMPONENT_ROLE="teacher_inference" ;;
+
+case "${PRIME_NODE_LAYOUT:-6node}" in
+  3node|345)
+    DEFAULT_TRAIN_NODE="3"
+    DEFAULT_POLICY_NODES="4"
+    DEFAULT_TEACHER_NODE="5"
+    ;;
+  6node|full)
+    DEFAULT_TRAIN_NODE="0"
+    DEFAULT_POLICY_NODES="1,2,3,4"
+    DEFAULT_TEACHER_NODE="5"
+    ;;
   *)
-    echo "[prime-opd-3node] node=${NODE_LABEL} host=$(hostname) reserved for another user; skipping."
-    exit 0
+    echo "[prime-opd] invalid PRIME_NODE_LAYOUT=${PRIME_NODE_LAYOUT}; expected 6node or 3node" >&2
+    exit 1
     ;;
 esac
 
-RUN_NAME="${OLMO_RUN_DIR_NAME:-${PRIME_3NODE_RUN_NAME:-prime_rl_opd_3node_full_vocab_dpsk_ctx81920_nodes345}}"
+TRAIN_NODE="${PRIME_TRAIN_NODE:-${DEFAULT_TRAIN_NODE}}"
+POLICY_NODES="${PRIME_POLICY_NODES:-${DEFAULT_POLICY_NODES}}"
+TEACHER_NODE="${PRIME_TEACHER_NODE:-${DEFAULT_TEACHER_NODE}}"
+
+csv_contains() {
+  local csv=$1
+  local needle=$2
+  local part
+  IFS=',' read -ra parts <<< "${csv}"
+  for part in "${parts[@]}"; do
+    part="${part//[[:space:]]/}"
+    if [[ "${part}" == "${needle}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [[ "${NODE_LABEL}" == "${TRAIN_NODE}" ]]; then
+  PRIME_COMPONENT_ROLE="trainer_orchestrator"
+elif [[ "${NODE_LABEL}" == "${TEACHER_NODE}" ]]; then
+  PRIME_COMPONENT_ROLE="teacher_inference"
+elif csv_contains "${POLICY_NODES}" "${NODE_LABEL}"; then
+  PRIME_COMPONENT_ROLE="policy_inference"
+else
+  echo "[prime-opd] node=${NODE_LABEL} host=$(hostname) not in train=${TRAIN_NODE} policy=${POLICY_NODES} teacher=${TEACHER_NODE}; skipping."
+  exit 0
+fi
+
+RUN_NAME="${OLMO_RUN_DIR_NAME:-${PRIME_3NODE_RUN_NAME:-prime_rl_opd_full_vocab_dpsk_ctx81920_multinode}}"
 LOCK_RUN_NAME="$(printf '%s' "${RUN_NAME}" | tr -c 'A-Za-z0-9_.-' '_')"
 
 # If an earlier command was stopped while waiting for remote endpoints, its
@@ -81,7 +123,7 @@ export VLLM_USE_BREAKABLE_CUDAGRAPH="${VLLM_USE_BREAKABLE_CUDAGRAPH:-0}"
 export VLLM_SKIP_DEEPSEEK_V4_SPARSE_MLA_WARMUP="${VLLM_SKIP_DEEPSEEK_V4_SPARSE_MLA_WARMUP:-1}"
 export HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}"
 export WANDB_MODE="${WANDB_MODE:-online}"
-export WANDB_PROJECT="${WANDB_PROJECT:-olmo3-prime-rl-full-vocab-3node}"
+export WANDB_PROJECT="${WANDB_PROJECT:-olmo3-prime-rl-full-vocab}"
 export PRIME_RL_PREFILL_HIDDEN_CONCURRENCY="${PRIME_RL_PREFILL_HIDDEN_CONCURRENCY:-1}"
 # Pin Prime-RL runtime vLLM to the wrapper's known-good wheel by default.
 # The baked vLLM 0.24 image currently fails policy FP8 startup with an internal
@@ -90,8 +132,7 @@ export PRIME_RL_PREFILL_HIDDEN_CONCURRENCY="${PRIME_RL_PREFILL_HIDDEN_CONCURRENC
 export PRIME_RL_RUNTIME_INSTALL_VLLM="${PRIME_RL_RUNTIME_INSTALL_VLLM:-1}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
-POLICY_VLLM_EXTRA_DEFAULT='{"kv_cache_dtype":"fp8","block_size":256,"disable_custom_all_reduce":true,"compilation_config":{"pass_config":{"fuse_allreduce_rms":false}}}'
-TEACHER_VLLM_EXTRA_DEFAULT='{"kv_cache_dtype":"fp8","block_size":256,"enable_expert_parallel":true,"linear_backend":"deep_gemm","disable_custom_all_reduce":true,"compilation_config":{"pass_config":{"fuse_allreduce_rms":false,"fi_allreduce_fusion_max_size_mb":0}},"additional_config":{}}'
+TEACHER_VLLM_EXTRA_DEFAULT='{"kv_cache_dtype":"fp8","block_size":256,"enable_expert_parallel":true,"linear_backend":"deep_gemm","disable_custom_all_reduce":true,"additional_config":{}}'
 
 RENDEZVOUS_DIR="${PRIME_3NODE_RENDEZVOUS_DIR:-/tmp/prime_rl_opd_3node/${RUN_NAME}}"
 mkdir -p "${RENDEZVOUS_DIR}"
@@ -134,12 +175,6 @@ print(json.dumps({
     "enable_expert_parallel": True,
     "linear_backend": "deep_gemm",
     "disable_custom_all_reduce": True,
-    "compilation_config": {
-        "pass_config": {
-            "fuse_allreduce_rms": False,
-            "fi_allreduce_fusion_max_size_mb": 0,
-        },
-    },
     "additional_config": {},
     "enable_chunked_prefill": False,
     "speculative_config": {
@@ -212,18 +247,32 @@ wait_for_http() {
   done
 }
 
-for rank in 3 4 5; do
+POLICY_PORT="${PRIME_POLICY_PORT:-8000}"
+TEACHER_PORT="${PRIME_OPD_TEACHER_PORT:-8001}"
+REQUIRED_NODES_CSV="${TRAIN_NODE},${POLICY_NODES},${TEACHER_NODE}"
+IFS=',' read -ra REQUIRED_NODE_PARTS <<< "${REQUIRED_NODES_CSV}"
+for rank in "${REQUIRED_NODE_PARTS[@]}"; do
+  rank="${rank//[[:space:]]/}"
+  [[ -z "${rank}" ]] && continue
   wait_for_file "${RENDEZVOUS_DIR}/node${rank}.ip" 900
 done
 
-TRAIN_IP="$(cat "${RENDEZVOUS_DIR}/node3.ip")"
-POLICY_IP="$(cat "${RENDEZVOUS_DIR}/node4.ip")"
-TEACHER_IP="$(cat "${RENDEZVOUS_DIR}/node5.ip")"
-POLICY_PORT="${PRIME_POLICY_PORT:-8000}"
-TEACHER_PORT="${PRIME_OPD_TEACHER_PORT:-8001}"
-POLICY_BASE_URL="http://${POLICY_IP}:${POLICY_PORT}/v1"
+TRAIN_IP="$(cat "${RENDEZVOUS_DIR}/node${TRAIN_NODE}.ip")"
+TEACHER_IP="$(cat "${RENDEZVOUS_DIR}/node${TEACHER_NODE}.ip")"
+POLICY_BASE_URL=""
+IFS=',' read -ra POLICY_NODE_PARTS <<< "${POLICY_NODES}"
+for policy_node in "${POLICY_NODE_PARTS[@]}"; do
+  policy_node="${policy_node//[[:space:]]/}"
+  [[ -z "${policy_node}" ]] && continue
+  POLICY_IP="$(cat "${RENDEZVOUS_DIR}/node${policy_node}.ip")"
+  if [[ -n "${POLICY_BASE_URL}" ]]; then
+    POLICY_BASE_URL+=","
+  fi
+  POLICY_BASE_URL+="http://${POLICY_IP}:${POLICY_PORT}/v1"
+done
 TEACHER_BASE_URL="http://${TEACHER_IP}:${TEACHER_PORT}/v1"
 
+echo "[prime-opd-3node] layout train=${TRAIN_NODE} policy=${POLICY_NODES} teacher=${TEACHER_NODE}"
 echo "[prime-opd-3node] train_ip=${TRAIN_IP}"
 echo "[prime-opd-3node] policy_base_url=${POLICY_BASE_URL}"
 echo "[prime-opd-3node] teacher_base_url=${TEACHER_BASE_URL}"
@@ -274,13 +323,33 @@ BATCH_SIZE="${PRIME_BATCH_SIZE:-2}"
 GROUP_SIZE="${PRIME_GROUP_SIZE:-2}"
 MAX_INFLIGHT="${PRIME_OPD_MAX_INFLIGHT_ROLLOUTS:-48}"
 MAX_OFF_POLICY="${PRIME_MAX_OFF_POLICY_STEPS:-24}"
-POLICY_TP="${PRIME_VLLM_TP:-2}"
-POLICY_DP="${PRIME_VLLM_DP:-4}"
+POLICY_TP="${PRIME_VLLM_TP:-1}"
+POLICY_DP="${PRIME_VLLM_DP:-8}"
 POLICY_GPU_COUNT=$((POLICY_TP * POLICY_DP))
 if (( POLICY_GPU_COUNT < 1 || POLICY_GPU_COUNT > 8 )); then
   echo "[prime-opd-3node] invalid policy topology: PRIME_VLLM_TP=${POLICY_TP} PRIME_VLLM_DP=${POLICY_DP} requires ${POLICY_GPU_COUNT} GPUs on one 8-GPU policy node" >&2
   exit 1
 fi
+POLICY_VLLM_EXTRA_DEFAULT="$(
+  POLICY_TP="${POLICY_TP}" python - <<'PY'
+import json
+import os
+
+tp = int(os.environ["POLICY_TP"])
+extra = {
+    "kv_cache_dtype": "fp8",
+    "block_size": 256,
+    "compilation_config": {
+        "pass_config": {
+            "fuse_allreduce_rms": False,
+        },
+    },
+}
+if tp > 2:
+    extra["disable_custom_all_reduce"] = True
+print(json.dumps(extra, separators=(",", ":")))
+PY
+)"
 POLICY_GPU_IDS_DEFAULT=""
 for ((gpu_idx = 0; gpu_idx < POLICY_GPU_COUNT; gpu_idx++)); do
   if [[ -n "${POLICY_GPU_IDS_DEFAULT}" ]]; then
@@ -396,8 +465,8 @@ COMMON_ARGS=(
 case "${PRIME_COMPONENT_ROLE}" in
   policy_inference)
     export OLMO_RUN_DIR_NAME="${RUN_NAME}_policy_node${NODE_LABEL}"
-    # Run TP=2,DP=4 by default: four 2-GPU policy instances on node4 reduce
-    # small-model communication cost while still using all 8 GPUs.
+    # Run TP=1,DP=8 by default: eight single-GPU policy instances avoid OLMo3
+    # TP Q/K RMSNorm all-gathers during decode while still using all 8 GPUs.
     export VLLM_FLASHINFER_ALLREDUCE_BACKEND="${PRIME_VLLM_FLASHINFER_ALLREDUCE_BACKEND:-trtllm}"
     export VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE="${PRIME_VLLM_FLASHINFER_WORKSPACE_BUFFER_SIZE:-2147483648}"
     exec "${TRAIN_PY_ENV[@]}" /usr/bin/python /app/train.py "${COMMON_ARGS[@]}" \
