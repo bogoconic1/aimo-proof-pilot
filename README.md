@@ -31,7 +31,7 @@ The command filename is historical; the current default in that script is a 20,4
 
 ## vLLM OLMo3Sink Speed Benchmark
 
-Use this when asking a host to estimate rollout generation speed on their hardware. It runs vLLM offline inference, pins vLLM to the known-good 0.23.1rc1 wheel by default, registers the local OLMo3Sink adapter, creates sixteen roughly 1k-token prompts, and requests 128k total output tokens by default. The default topology is `TP=1, DP=8`, implemented as eight independent one-GPU vLLM engines, so each engine handles two requests.
+Use this to estimate rollout generation speed on Ai2 hardware. It runs vLLM offline inference, pins vLLM to the known-good 0.23.1rc1 wheel by default, registers the local OLMo3Sink adapter, creates sixteen roughly 1k-token prompts, and requests 128k total output tokens by default. The default topology is `TP=1, DP=8`, implemented as eight independent one-GPU vLLM engines, so each engine handles two requests.
 
 ```bash
 python scripts/bench_vllm_olmo3sink_speed.py \
@@ -63,7 +63,7 @@ python scripts/bench_vllm_olmo3sink_speed.py \
 ```
 
 The script prints engine load time, actual prompt/output token counts, finish reasons, total decode tokens per second, per-request decode tokens per second, per-DP-rank metrics, aggregate DP throughput, and `nvidia-smi` snapshots.
-It also patches the isolated pinned vLLM target so optional FlashInfer/TileLang kernels are disabled by default and sets `VLLM_USE_DEEP_GEMM=0`; pass `--disable-flashinfer false --disable-tilelang false --use-deep-gemm true` if the host has those kernels working and you want to test that path.
+It also patches the isolated pinned vLLM target so optional FlashInfer/TileLang kernels are disabled by default and sets `VLLM_USE_DEEP_GEMM=0`; pass `--disable-flashinfer false --disable-tilelang false --use-deep-gemm true` if the Ai2 has those kernels working and you want to test that path.
 
 ## Current Best OPD Pipeline: 4xH200, 20k Context
 
