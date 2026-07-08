@@ -632,6 +632,7 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
         "inference": {
             "gpu_memory_utilization": args.prime_vllm_gpu_memory_utilization,
             "api_server_count": args.prime_vllm_api_server_count,
+            "data_parallel_rpc_port": args.prime_vllm_data_parallel_rpc_port,
             "enable_prefix_caching": args.prime_vllm_enable_prefix_caching,
             "use_deep_gemm": args.prime_vllm_use_deep_gemm,
         }
@@ -680,6 +681,7 @@ def build_prime_policy_inference_config(args: argparse.Namespace, output_dir: Pa
         "inference": {
             "gpu_memory_utilization": args.prime_vllm_gpu_memory_utilization,
             "api_server_count": args.prime_vllm_api_server_count,
+            "data_parallel_rpc_port": args.prime_vllm_data_parallel_rpc_port,
             "enable_prefix_caching": args.prime_vllm_enable_prefix_caching,
             "use_deep_gemm": args.prime_vllm_use_deep_gemm,
         },
@@ -726,6 +728,7 @@ def build_prime_teacher_inference_config(args: argparse.Namespace, output_dir: P
         "inference": {
             "gpu_memory_utilization": args.prime_opd_teacher_vllm_gpu_memory_utilization,
             "api_server_count": args.prime_opd_teacher_vllm_api_server_count,
+            "data_parallel_rpc_port": args.prime_opd_teacher_vllm_data_parallel_rpc_port,
             "enable_prefix_caching": args.prime_opd_teacher_vllm_enable_prefix_caching,
             "use_deep_gemm": args.prime_opd_teacher_vllm_use_deep_gemm,
         },
@@ -1172,6 +1175,7 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--prime_vllm_enforce_eager", type=parse_bool, default=False)
     parser.add_argument("--prime_vllm_gpu_memory_utilization", type=float, default=0.9)
     parser.add_argument("--prime_vllm_api_server_count", type=int, default=1)
+    parser.add_argument("--prime_vllm_data_parallel_rpc_port", type=int, default=13345)
     parser.add_argument("--prime_vllm_enable_prefix_caching", type=parse_bool, default=True)
     parser.add_argument("--prime_vllm_use_deep_gemm", type=parse_bool, default=False)
     parser.add_argument("--prime_vllm_quantization", default=None)
@@ -1193,6 +1197,7 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--prime_opd_teacher_vllm_enforce_eager", type=parse_bool, default=False)
     parser.add_argument("--prime_opd_teacher_vllm_gpu_memory_utilization", type=float, default=0.9)
     parser.add_argument("--prime_opd_teacher_vllm_api_server_count", type=int, default=1)
+    parser.add_argument("--prime_opd_teacher_vllm_data_parallel_rpc_port", type=int, default=13345)
     parser.add_argument("--prime_opd_teacher_vllm_enable_prefix_caching", type=parse_bool, default=True)
     parser.add_argument("--prime_opd_teacher_vllm_use_deep_gemm", type=parse_bool, default=False)
     parser.add_argument("--prime_opd_teacher_vllm_quantization", default=None)

@@ -366,6 +366,11 @@ if (( POLICY_GPU_COUNT < 1 || POLICY_GPU_COUNT > 8 )); then
   echo "[prime-opd-3node] invalid policy topology: PRIME_VLLM_TP=${POLICY_TP} PRIME_VLLM_DP=${POLICY_DP} requires ${POLICY_GPU_COUNT} GPUs on one 8-GPU policy node" >&2
   exit 1
 fi
+POLICY_API_SERVER_COUNT="${PRIME_VLLM_API_SERVER_COUNT:-${POLICY_DP}}"
+POLICY_DP_RPC_PORT="${PRIME_VLLM_DATA_PARALLEL_RPC_PORT:-$((37000 + NODE_LABEL))}"
+TEACHER_DP_RPC_PORT="${PRIME_OPD_TEACHER_VLLM_DATA_PARALLEL_RPC_PORT:-38005}"
+echo "[prime-opd-3node] policy_topology tp=${POLICY_TP} dp=${POLICY_DP} api_servers=${POLICY_API_SERVER_COUNT} dp_rpc_port=${POLICY_DP_RPC_PORT}"
+echo "[prime-opd-3node] teacher_dp_rpc_port=${TEACHER_DP_RPC_PORT}"
 POLICY_VLLM_EXTRA_DEFAULT="$(
   POLICY_TP="${POLICY_TP}" python - <<'PY'
 import json
@@ -518,6 +523,8 @@ case "${PRIME_COMPONENT_ROLE}" in
       --prime_vllm_enforce_eager "${PRIME_VLLM_ENFORCE_EAGER:-false}" \
       --prime_vllm_quantization "${PRIME_VLLM_QUANTIZATION:-fp8}" \
       --prime_vllm_gpu_memory_utilization "${PRIME_VLLM_GPU_MEMORY_UTILIZATION:-0.95}" \
+      --prime_vllm_api_server_count "${POLICY_API_SERVER_COUNT}" \
+      --prime_vllm_data_parallel_rpc_port "${POLICY_DP_RPC_PORT}" \
       --prime_vllm_use_deep_gemm "${PRIME_VLLM_USE_DEEP_GEMM:-false}" \
       --prime_vllm_max_num_seqs "${PRIME_OPD_POLICY_MAX_NUM_SEQS:-16}" \
       --prime_vllm_max_num_batched_tokens "${BATCHED_TOKENS}" \
@@ -549,6 +556,8 @@ case "${PRIME_COMPONENT_ROLE}" in
       --prime_opd_teacher_vllm_enforce_eager "${PRIME_OPD_TEACHER_VLLM_ENFORCE_EAGER:-false}" \
       --prime_opd_teacher_vllm_quantization "${PRIME_OPD_TEACHER_VLLM_QUANTIZATION:-none}" \
       --prime_opd_teacher_vllm_gpu_memory_utilization "${PRIME_OPD_TEACHER_GPU_MEMORY_UTILIZATION:-0.95}" \
+      --prime_opd_teacher_vllm_api_server_count "${PRIME_OPD_TEACHER_VLLM_API_SERVER_COUNT:-1}" \
+      --prime_opd_teacher_vllm_data_parallel_rpc_port "${TEACHER_DP_RPC_PORT}" \
       --prime_opd_teacher_vllm_use_deep_gemm "${PRIME_OPD_TEACHER_USE_DEEP_GEMM:-false}" \
       --prime_opd_teacher_vllm_max_num_seqs "${PRIME_OPD_TEACHER_MAX_NUM_SEQS:-4}" \
       --prime_opd_teacher_vllm_max_num_batched_tokens "${TEACHER_BATCHED_TOKENS}" \
