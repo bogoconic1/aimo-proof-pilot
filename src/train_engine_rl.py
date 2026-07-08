@@ -43,6 +43,15 @@ def parse_extra_json(value: str | None) -> dict[str, Any]:
     return loaded
 
 
+def normalize_optional_choice(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"none", "null", "false", "off"}:
+        return None
+    return text
+
+
 def log(message: str) -> None:
     timestamp = datetime.now().strftime("%H:%M:%S,%f")[:-3]
     print(f"{timestamp} train_engine_rl {message}", flush=True)
@@ -384,8 +393,9 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
     extra_body = parse_extra_json(args.prime_sampling_extra_body)
     extra_body.setdefault("top_p", args.prime_top_p)
     vllm_extra = parse_extra_json(args.prime_vllm_extra)
-    if args.prime_vllm_quantization:
-        vllm_extra["quantization"] = args.prime_vllm_quantization
+    prime_vllm_quantization = normalize_optional_choice(args.prime_vllm_quantization)
+    if prime_vllm_quantization:
+        vllm_extra["quantization"] = prime_vllm_quantization
     if args.prime_vllm_max_num_seqs is not None:
         vllm_extra["max_num_seqs"] = args.prime_vllm_max_num_seqs
     if args.prime_vllm_max_num_batched_tokens is not None:
@@ -625,8 +635,9 @@ def build_prime_rl_config(args: argparse.Namespace, output_dir: Path) -> dict[st
 
 def build_prime_policy_inference_config(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
     vllm_extra = parse_extra_json(args.prime_vllm_extra)
-    if args.prime_vllm_quantization:
-        vllm_extra["quantization"] = args.prime_vllm_quantization
+    prime_vllm_quantization = normalize_optional_choice(args.prime_vllm_quantization)
+    if prime_vllm_quantization:
+        vllm_extra["quantization"] = prime_vllm_quantization
     if args.prime_vllm_max_num_seqs is not None:
         vllm_extra["max_num_seqs"] = args.prime_vllm_max_num_seqs
     if args.prime_vllm_max_num_batched_tokens is not None:
@@ -670,8 +681,9 @@ def build_prime_policy_inference_config(args: argparse.Namespace, output_dir: Pa
 
 def build_prime_teacher_inference_config(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
     vllm_extra = parse_extra_json(args.prime_opd_teacher_vllm_extra)
-    if args.prime_opd_teacher_vllm_quantization:
-        vllm_extra["quantization"] = args.prime_opd_teacher_vllm_quantization
+    teacher_quantization = normalize_optional_choice(args.prime_opd_teacher_vllm_quantization)
+    if teacher_quantization:
+        vllm_extra["quantization"] = teacher_quantization
     if args.prime_opd_teacher_vllm_max_num_seqs is not None:
         vllm_extra["max_num_seqs"] = args.prime_opd_teacher_vllm_max_num_seqs
     if args.prime_opd_teacher_vllm_max_num_batched_tokens is not None:
