@@ -29,6 +29,37 @@ bash -n operator_commands/prime_rl_opd_4xh200_muon_imo_ctx16384_2train_1policy_1
 
 The command filename is historical; the current default in that script is a 20,480-token trainer context.
 
+## vLLM OLMo3Sink Speed Benchmark
+
+Use this when asking a host to estimate rollout generation speed on their hardware. It runs vLLM offline inference, registers the local OLMo3Sink adapter, creates eight roughly 1k-token prompts, and requests 128k total output tokens by default.
+
+```bash
+python scripts/bench_vllm_olmo3sink_speed.py \
+  --model /path/to/opd-32b-v33-s150 \
+  --batch-size 8 \
+  --prompt-tokens 1024 \
+  --total-output-tokens 131072 \
+  --tensor-parallel-size 1 \
+  --gpu-memory-utilization 0.95 \
+  --kv-cache-dtype fp8 \
+  --block-size 256 \
+  --out-json /tmp/olmo3sink_vllm_bench.json
+```
+
+This default means 16,384 generated tokens per request. For a heavier 128k-per-request test, use:
+
+```bash
+python scripts/bench_vllm_olmo3sink_speed.py \
+  --model /path/to/opd-32b-v33-s150 \
+  --batch-size 8 \
+  --prompt-tokens 1024 \
+  --max-tokens-per-request 128000 \
+  --max-model-len 131072 \
+  --tensor-parallel-size 1
+```
+
+The script prints engine load time, actual prompt/output token counts, finish reasons, total decode tokens per second, per-request decode tokens per second, and `nvidia-smi` snapshots.
+
 ## Current Best OPD Pipeline: 4xH200, 20k Context
 
 Use:
