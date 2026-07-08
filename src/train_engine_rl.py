@@ -848,6 +848,47 @@ def wait_for_http_ready(url: str, process: subprocess.Popen, log_path: Path, tim
     raise TimeoutError(f"Timed out waiting for {url}: {last_error}\nRecent teacher log:\n{tail}")
 
 
+def wait_for_external_http_ready(
+    url: str,
+    *,
+    label: str,
+    timeout_s: int,
+    poll_s: float = 5.0,
+    log_every_s: float = 30.0,
+) -> None:
+    """Wait for an externally managed Prime-RL service before launching rl.
+
+    In multi-node role-gated runs the policy and teacher inference services are
+    started by separate operator commands. Waiting here keeps the long-lived
+    trainer role visible as a Python process with periodic logs, instead of
+    blocking silently in the shell wrapper before train.py starts.
+    """
+
+    deadline = time.monotonic() + max(1, timeout_s)
+    last_log = 0.0
+    last_error = ""
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(url, timeout=5) as response:
+                if response.status == 200:
+                    log(f"{label} ready: {url}")
+                    return
+                last_error = f"HTTP {response.status}"
+        except URLError as exc:
+            last_error = str(exc)
+        except TimeoutError as exc:
+            last_error = str(exc)
+
+        now = time.monotonic()
+        if now - last_log >= log_every_s:
+            remaining = max(0, int(deadline - now))
+            log(f"Waiting for {label}: {url} remaining_s={remaining} last_error={last_error}")
+            last_log = now
+        time.sleep(max(0.5, poll_s))
+
+    raise TimeoutError(f"Timed out waiting for {label}: {url}; last_error={last_error}")
+
+
 def start_teacher_inference(args: argparse.Namespace, log_dir: Path) -> subprocess.Popen | None:
     if args.prime_algorithm != "opd" or not args.prime_opd_start_teacher:
         return None
@@ -1213,6 +1254,13 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--prime_policy_base_url is required for --prime_component trainer_orchestrator")
         if args.prime_algorithm == "opd" and not args.prime_opd_teacher_base_url:
             raise ValueError("--prime_opd_teacher_base_url is required for OPD trainer_orchestrator mode")
+        policy_ready_url = args.prime_policy_base_url.rstrip("/") + "/models"
+        policy_timeout = int(os.environ.get("PRIME_POLICY_READY_TIMEOUT", "7200"))
+        wait_for_external_http_ready(policy_ready_url, label="policy inference", timeout_s=policy_timeout)
+        if args.prime_algorithm == "opd":
+            teacher_ready_url = args.prime_opd_teacher_base_url.rstrip("/") + "/models"
+            teacher_timeout = int(os.environ.get("PRIME_TEACHER_READY_TIMEOUT", str(args.prime_opd_teacher_ready_timeout)))
+            wait_for_external_http_ready(teacher_ready_url, label="OPD teacher inference", timeout_s=teacher_timeout)
         args.prime_opd_start_teacher = False
 
     config_path = log_dir / "prime_rl.toml"

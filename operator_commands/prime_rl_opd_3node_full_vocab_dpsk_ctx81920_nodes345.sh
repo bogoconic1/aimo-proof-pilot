@@ -352,9 +352,7 @@ case "${PRIME_COMPONENT_ROLE}" in
     ;;
 
   trainer_orchestrator)
-    echo "[prime-opd-3node] waiting for policy and teacher endpoints before trainer starts"
-    wait_for_http "http://${POLICY_IP}:${POLICY_PORT}/v1/models" "${PRIME_POLICY_READY_TIMEOUT:-7200}"
-    wait_for_http "http://${TEACHER_IP}:${TEACHER_PORT}/v1/models" "${PRIME_TEACHER_READY_TIMEOUT:-7200}"
+    echo "[prime-opd-3node] starting trainer; train_engine_rl will wait for policy and teacher endpoints"
     export OLMO_RUN_DIR_NAME="${RUN_NAME}_trainer_node${NODE_LABEL}"
     exec "${TRAIN_PY_ENV[@]}" /usr/bin/python /app/train.py "${COMMON_ARGS[@]}" \
       --prime_component trainer_orchestrator \
