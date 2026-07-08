@@ -118,15 +118,16 @@ def _call_rope_init_for_layer(
     flattened per-layer config.
     """
 
-    if layer_type is not None:
-        try:
-            return rope_init_fn(config, device, layer_type=layer_type)
-        except TypeError as exc:
-            if "layer_type" not in str(exc) and "unexpected keyword" not in str(exc):
-                raise
-        except KeyError as exc:
-            if exc.args and exc.args[0] not in (layer_type, None, "rope_type", "rope_theta"):
-                raise
+    nested_config = copy(config)
+    nested_config.rope_parameters = {layer_type: dict(layer_config.rope_parameters)}
+    try:
+        return rope_init_fn(nested_config, device, layer_type=layer_type)
+    except TypeError as exc:
+        if "layer_type" not in str(exc) and "unexpected keyword" not in str(exc):
+            raise
+    except KeyError as exc:
+        if exc.args and exc.args[0] not in (layer_type, None, "rope_type", "rope_theta"):
+            raise
 
     return rope_init_fn(layer_config, device)
 
@@ -153,17 +154,23 @@ class Olmo3SinkRotaryEmbedding(Olmo3RotaryEmbedding):
         self.config = config
         self.layer_type = layer_type
 
-        rope_parameters = self.config.rope_parameters
-        if layer_type is not None and layer_type in rope_parameters:
-            rope_parameters = rope_parameters[layer_type]
-        self.rope_type = rope_type or rope_parameters["rope_type"]
+        raw_rope_parameters = getattr(self.config, "rope_parameters", {}) or {}
+        if (
+            layer_type is not None
+            and isinstance(raw_rope_parameters, dict)
+            and isinstance(raw_rope_parameters.get(layer_type), dict)
+        ):
+            rope_parameters = dict(raw_rope_parameters[layer_type])
+        else:
+            rope_parameters = dict(raw_rope_parameters)
+        if rope_type is not None:
+            rope_parameters["rope_type"] = rope_type
+        self.rope_type = rope_parameters.get("rope_type", "default")
         rope_init_fn: Callable = self.compute_default_rope_parameters
         if self.rope_type != "default":
             rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-        layer_config = self.config
-        if layer_type is not None:
-            layer_config = copy(self.config)
-            layer_config.rope_parameters = self.config.rope_parameters[layer_type]
+        layer_config = copy(self.config)
+        layer_config.rope_parameters = rope_parameters
         inv_freq, self.attention_scaling = _call_rope_init_for_layer(
             rope_init_fn,
             self.config,
