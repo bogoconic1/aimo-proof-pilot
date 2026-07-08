@@ -414,6 +414,7 @@ case "${PRIME_COMPONENT_ROLE}" in
       --prime_opd_teacher_vllm_max_model_len "${VLLM_CTX_LEN}" \
       --prime_opd_teacher_vllm_dtype bfloat16 \
       --prime_opd_teacher_vllm_enforce_eager "${PRIME_OPD_TEACHER_VLLM_ENFORCE_EAGER:-false}" \
+      --prime_opd_teacher_vllm_quantization "${PRIME_OPD_TEACHER_VLLM_QUANTIZATION:-fp8}" \
       --prime_opd_teacher_vllm_gpu_memory_utilization "${PRIME_OPD_TEACHER_GPU_MEMORY_UTILIZATION:-0.82}" \
       --prime_opd_teacher_vllm_use_deep_gemm "${PRIME_OPD_TEACHER_USE_DEEP_GEMM:-true}" \
       --prime_opd_teacher_vllm_max_num_seqs "${PRIME_OPD_TEACHER_MAX_NUM_SEQS:-4}" \
