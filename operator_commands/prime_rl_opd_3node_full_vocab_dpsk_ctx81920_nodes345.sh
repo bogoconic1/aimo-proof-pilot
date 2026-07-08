@@ -362,8 +362,8 @@ case "${PRIME_COMPONENT_ROLE}" in
       --prime_opd_teacher_gpu_ids "0,1,2,3,4,5,6,7" \
       --prime_opd_teacher_port "${TEACHER_PORT}" \
       --prime_opd_teacher_ready_timeout "${PRIME_OPD_TEACHER_READY_TIMEOUT:-7200}" \
-      --prime_opd_teacher_vllm_tensor_parallel_size "${PRIME_OPD_TEACHER_TP:-8}" \
-      --prime_opd_teacher_vllm_data_parallel_size "${PRIME_OPD_TEACHER_DP:-1}" \
+      --prime_opd_teacher_vllm_tensor_parallel_size "${PRIME_OPD_TEACHER_TP:-2}" \
+      --prime_opd_teacher_vllm_data_parallel_size "${PRIME_OPD_TEACHER_DP:-4}" \
       --prime_opd_teacher_vllm_max_model_len "${VLLM_CTX_LEN}" \
       --prime_opd_teacher_vllm_dtype bfloat16 \
       --prime_opd_teacher_vllm_enforce_eager "${PRIME_OPD_TEACHER_VLLM_ENFORCE_EAGER:-false}" \
@@ -390,7 +390,7 @@ case "${PRIME_COMPONENT_ROLE}" in
       --prime_opd_teacher_model "${TEACHER_MODEL_PATH}" \
       --prime_opd_start_teacher false \
       --prime_opd_teacher_base_url "${TEACHER_BASE_URL}" \
-      --prime_opd_teacher_vllm_tensor_parallel_size "${PRIME_OPD_TEACHER_TP:-8}" \
-      --prime_opd_teacher_vllm_data_parallel_size "${PRIME_OPD_TEACHER_DP:-1}"
+      --prime_opd_teacher_vllm_tensor_parallel_size "${PRIME_OPD_TEACHER_TP:-2}" \
+      --prime_opd_teacher_vllm_data_parallel_size "${PRIME_OPD_TEACHER_DP:-4}"
     ;;
 esac
