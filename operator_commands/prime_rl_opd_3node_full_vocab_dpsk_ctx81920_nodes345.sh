@@ -43,6 +43,9 @@ export HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}"
 export WANDB_MODE="${WANDB_MODE:-online}"
 export WANDB_PROJECT="${WANDB_PROJECT:-olmo3-prime-rl-full-vocab-3node}"
 export PRIME_RL_PREFILL_HIDDEN_CONCURRENCY="${PRIME_RL_PREFILL_HIDDEN_CONCURRENCY:-1}"
+# Keep the container's upgraded vLLM by default. Setting this to 1 is still
+# supported for explicit wheel override tests.
+export PRIME_RL_RUNTIME_INSTALL_VLLM="${PRIME_RL_RUNTIME_INSTALL_VLLM:-0}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 RUN_NAME="${OLMO_RUN_DIR_NAME:-${PRIME_3NODE_RUN_NAME:-prime_rl_opd_3node_full_vocab_dpsk_ctx81920_nodes345}}"
