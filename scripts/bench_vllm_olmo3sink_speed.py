@@ -14,6 +14,7 @@ If you need 128k output tokens *per request*, pass
 from __future__ import annotations
 
 import argparse
+import hashlib
 import inspect
 import json
 import os
@@ -70,6 +71,7 @@ def register_olmo3sink(src_dir: Path, skip: bool) -> None:
     if skip:
         return
     add_src_to_path(src_dir)
+    install_vllm_plugin_shim(src_dir)
     from olmo3_sink import register_olmo3_sink
 
     register_olmo3_sink()
@@ -83,6 +85,61 @@ def register_olmo3sink(src_dir: Path, skip: bool) -> None:
         "Olmo3SinkForCausalLM",
         "olmo3_sink.vllm_adapter:Olmo3SinkForCausalLM",
     )
+
+
+def install_vllm_plugin_shim(src_dir: Path) -> None:
+    """Expose OLMo3Sink registration to vLLM worker subprocesses.
+
+    vLLM offline inference may spawn worker processes after the parent process
+    registers a custom model. In-process `ModelRegistry.register_model()` does
+    not cross the process boundary, so we create a tiny temporary distribution
+    on `PYTHONPATH` with a `vllm.general_plugins` entry point. vLLM loads these
+    plugins in the engine core and worker processes before model resolution.
+    """
+    src_dir = src_dir.resolve()
+    digest = hashlib.sha256(str(src_dir).encode()).hexdigest()[:12]
+    plugin_root = Path(os.environ.get("OLMO3SINK_VLLM_PLUGIN_DIR", f"/tmp/olmo3sink_vllm_plugin_{digest}"))
+    dist_info = plugin_root / "olmo3sink_vllm_plugin-0.0.0.dist-info"
+    plugin_root.mkdir(parents=True, exist_ok=True)
+    dist_info.mkdir(parents=True, exist_ok=True)
+    (plugin_root / "olmo3sink_vllm_plugin.py").write_text(
+        "\n".join(
+            [
+                "from __future__ import annotations",
+                "import sys",
+                f"SRC_DIR = {str(src_dir)!r}",
+                "def register():",
+                "    if SRC_DIR not in sys.path:",
+                "        sys.path.insert(0, SRC_DIR)",
+                "    from olmo3_sink import register_olmo3_sink",
+                "    register_olmo3_sink()",
+                "    from vllm import ModelRegistry",
+                "    ModelRegistry.register_model(",
+                "        'Olmo3SinkForCausalLM',",
+                "        'olmo3_sink.vllm_adapter:Olmo3SinkForCausalLM',",
+                "    )",
+                "",
+            ]
+        )
+    )
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.1\n"
+        "Name: olmo3sink-vllm-plugin\n"
+        "Version: 0.0.0\n"
+    )
+    (dist_info / "entry_points.txt").write_text(
+        "[vllm.general_plugins]\n"
+        "olmo3sink_bench = olmo3sink_vllm_plugin:register\n"
+    )
+    plugin_text = str(plugin_root)
+    if plugin_text not in sys.path:
+        sys.path.insert(0, plugin_text)
+    existing = os.environ.get("PYTHONPATH")
+    if existing:
+        if plugin_text not in existing.split(os.pathsep):
+            os.environ["PYTHONPATH"] = plugin_text + os.pathsep + existing
+    else:
+        os.environ["PYTHONPATH"] = plugin_text
 
 
 def tokenizer_len(tokenizer: Any, text: str) -> int:
