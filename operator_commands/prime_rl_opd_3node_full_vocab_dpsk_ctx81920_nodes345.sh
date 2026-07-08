@@ -18,7 +18,32 @@ case "${NODE_LABEL}" in
     ;;
 esac
 
-ROLE_LOCK="/dev/shm/prime_rl_opd_3node_${NODE_LABEL}_${PRIME_COMPONENT_ROLE}.lock"
+RUN_NAME="${OLMO_RUN_DIR_NAME:-${PRIME_3NODE_RUN_NAME:-prime_rl_opd_3node_full_vocab_dpsk_ctx81920_nodes345}}"
+LOCK_RUN_NAME="$(printf '%s' "${RUN_NAME}" | tr -c 'A-Za-z0-9_.-' '_')"
+
+# If an earlier command was stopped while waiting for remote endpoints, its
+# bash wrapper can keep holding the old role lock even though no Prime-RL
+# process is active. Clean only old role command shells for this same node.
+if [[ "${PRIME_3NODE_KILL_STALE_ROLE_SHELLS:-1}" == "1" ]]; then
+  mapfile -t STALE_ROLE_SHELL_PIDS < <(
+    ps -eo pid=,args= \
+      | awk -v self="$$" -v node="${NODE_LABEL}" '
+          $1 != self && $0 ~ "/olmo_operator/node" node "/commands/.*/command.sh" { print $1 }
+        '
+  )
+  if (( ${#STALE_ROLE_SHELL_PIDS[@]} > 0 )); then
+    echo "[prime-opd-3node] terminating stale role command shell(s): ${STALE_ROLE_SHELL_PIDS[*]}"
+    kill "${STALE_ROLE_SHELL_PIDS[@]}" 2>/dev/null || true
+    sleep 3
+    for stale_pid in "${STALE_ROLE_SHELL_PIDS[@]}"; do
+      if kill -0 "${stale_pid}" 2>/dev/null; then
+        kill -9 "${stale_pid}" 2>/dev/null || true
+      fi
+    done
+  fi
+fi
+
+ROLE_LOCK="/dev/shm/prime_rl_opd_3node_${LOCK_RUN_NAME}_${NODE_LABEL}_${PRIME_COMPONENT_ROLE}.lock"
 exec 29>"${ROLE_LOCK}"
 if ! flock -n 29; then
   echo "[prime-opd-3node] node=${NODE_LABEL} role=${PRIME_COMPONENT_ROLE} already running; lock=${ROLE_LOCK}; skipping duplicate operator."
@@ -48,7 +73,6 @@ export PRIME_RL_PREFILL_HIDDEN_CONCURRENCY="${PRIME_RL_PREFILL_HIDDEN_CONCURRENC
 export PRIME_RL_RUNTIME_INSTALL_VLLM="${PRIME_RL_RUNTIME_INSTALL_VLLM:-0}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
-RUN_NAME="${OLMO_RUN_DIR_NAME:-${PRIME_3NODE_RUN_NAME:-prime_rl_opd_3node_full_vocab_dpsk_ctx81920_nodes345}}"
 RENDEZVOUS_DIR="${PRIME_3NODE_RENDEZVOUS_DIR:-/tmp/prime_rl_opd_3node/${RUN_NAME}}"
 mkdir -p "${RENDEZVOUS_DIR}"
 
