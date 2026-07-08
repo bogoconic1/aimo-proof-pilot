@@ -35,6 +35,20 @@ TRAIN_NODE="${PRIME_TRAIN_NODE:-${DEFAULT_TRAIN_NODE}}"
 POLICY_NODES="${PRIME_POLICY_NODES:-${DEFAULT_POLICY_NODES}}"
 TEACHER_NODE="${PRIME_TEACHER_NODE:-${DEFAULT_TEACHER_NODE}}"
 
+csv_count() {
+  local csv=$1
+  local part
+  local count=0
+  IFS=',' read -ra parts <<< "${csv}"
+  for part in "${parts[@]}"; do
+    part="${part//[[:space:]]/}"
+    if [[ -n "${part}" ]]; then
+      count=$((count + 1))
+    fi
+  done
+  printf '%s\n' "${count}"
+}
+
 csv_contains() {
   local csv=$1
   local needle=$2
@@ -48,6 +62,12 @@ csv_contains() {
   done
   return 1
 }
+
+POLICY_NODE_COUNT="$(csv_count "${POLICY_NODES}")"
+if (( POLICY_NODE_COUNT < 1 )); then
+  echo "[prime-opd] PRIME_POLICY_NODES must contain at least one node" >&2
+  exit 1
+fi
 
 if [[ "${NODE_LABEL}" == "${TRAIN_NODE}" ]]; then
   PRIME_COMPONENT_ROLE="trainer_orchestrator"
@@ -275,7 +295,7 @@ for policy_node in "${POLICY_NODE_PARTS[@]}"; do
 done
 TEACHER_BASE_URL="http://${TEACHER_IP}:${TEACHER_PORT}/v1"
 
-echo "[prime-opd-3node] layout train=${TRAIN_NODE} policy=${POLICY_NODES} teacher=${TEACHER_NODE}"
+echo "[prime-opd-3node] layout train=${TRAIN_NODE} policy=${POLICY_NODES} teacher=${TEACHER_NODE} policy_node_count=${POLICY_NODE_COUNT}"
 echo "[prime-opd-3node] train_ip=${TRAIN_IP}"
 echo "[prime-opd-3node] policy_base_url=${POLICY_BASE_URL}"
 echo "[prime-opd-3node] teacher_base_url=${TEACHER_BASE_URL}"
@@ -321,10 +341,17 @@ BATCHED_TOKENS="${PRIME_OPD_BATCHED_TOKENS:-65536}"
 # The teacher endpoint is used for serialized hidden-state scoring, so keep its
 # startup profiling shape much smaller than the policy rollout endpoint.
 TEACHER_BATCHED_TOKENS="${PRIME_OPD_TEACHER_BATCHED_TOKENS:-32768}"
+if (( TEACHER_BATCHED_TOKENS < VLLM_CTX_LEN )); then
+  echo "[prime-opd-3node] raising teacher max_num_batched_tokens from ${TEACHER_BATCHED_TOKENS} to ${VLLM_CTX_LEN} to satisfy vLLM max_model_len validation"
+  TEACHER_BATCHED_TOKENS="${VLLM_CTX_LEN}"
+fi
 MAX_STEPS="${MAX_TRAIN_STEPS:-1000}"
 BATCH_SIZE="${PRIME_BATCH_SIZE:-2}"
 GROUP_SIZE="${PRIME_GROUP_SIZE:-2}"
-MAX_INFLIGHT="${PRIME_OPD_MAX_INFLIGHT_ROLLOUTS:-48}"
+INFLIGHT_PER_POLICY_NODE="${PRIME_OPD_INFLIGHT_ROLLOUTS_PER_POLICY_NODE:-48}"
+DEFAULT_MAX_INFLIGHT=$((INFLIGHT_PER_POLICY_NODE * POLICY_NODE_COUNT))
+MAX_INFLIGHT="${PRIME_OPD_MAX_INFLIGHT_ROLLOUTS:-${DEFAULT_MAX_INFLIGHT}}"
+echo "[prime-opd-3node] max_inflight_rollouts=${MAX_INFLIGHT} (${INFLIGHT_PER_POLICY_NODE}/policy_node; override PRIME_OPD_MAX_INFLIGHT_ROLLOUTS)"
 MAX_OFF_POLICY="${PRIME_MAX_OFF_POLICY_STEPS:-24}"
 POLICY_TP="${PRIME_VLLM_TP:-1}"
 POLICY_DP="${PRIME_VLLM_DP:-8}"
