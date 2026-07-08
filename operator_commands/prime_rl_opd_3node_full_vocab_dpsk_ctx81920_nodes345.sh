@@ -132,7 +132,13 @@ if [[ "${PRIME_3NODE_CLEAN_ROLE_PROCS:-1}" == "1" ]]; then
   pkill -9 -f "[p]ython.*prime_rl" 2>/dev/null || true
   pkill -9 -f "[t]orchrun.*prime_rl" 2>/dev/null || true
   pkill -9 -f "[v]llm" 2>/dev/null || true
+  pkill -9 -f "[V]LLM::" 2>/dev/null || true
+  pkill -9 -f "[E]ngineCore" 2>/dev/null || true
+  pkill -9 -f "[A]PIServer" 2>/dev/null || true
   pkill -9 "vllm" 2>/dev/null || true
+  nvidia-smi pmon -c 1 2>/dev/null \
+    | awk 'NR > 2 && $2 ~ /^[0-9]+$/ && $9 ~ /VLLM::|EngineCore|APIServer/ {print $2}' \
+    | xargs -r kill -9 2>/dev/null || true
   rm -rf /dev/shm/vllm-* /dev/shm/vllm_* /tmp/vllm-* /tmp/vllm_* /tmp/torch-* /tmp/torchelastic_* 2>/dev/null || true
 fi
 
