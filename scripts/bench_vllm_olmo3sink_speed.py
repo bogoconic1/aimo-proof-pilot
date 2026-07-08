@@ -20,6 +20,7 @@ import inspect
 import json
 import multiprocessing as mp
 import os
+import re
 import socket
 import statistics
 import subprocess
@@ -73,6 +74,7 @@ def ensure_vllm_pin(args: argparse.Namespace) -> None:
     target = Path(args.vllm_install_dir).expanduser().resolve()
     if (target / "vllm").exists():
         add_pythonpath(target)
+        patch_vllm_tilelang_probe(target)
     try:
         current = importlib_metadata.version("vllm")
     except importlib_metadata.PackageNotFoundError:
@@ -80,6 +82,7 @@ def ensure_vllm_pin(args: argparse.Namespace) -> None:
 
     expected = args.vllm_version_fragment
     if current and expected in current and not args.force_reinstall_vllm:
+        patch_vllm_tilelang_probe(target)
         print(f"vllm_pin=current_ok version={current}")
         return
 
@@ -104,11 +107,41 @@ def ensure_vllm_pin(args: argparse.Namespace) -> None:
     ]
     subprocess.check_call(command)
     add_pythonpath(target)
+    patch_vllm_tilelang_probe(target)
     try:
         installed = importlib_metadata.version("vllm")
     except importlib_metadata.PackageNotFoundError:
         installed = "missing"
     print(f"vllm_pin=installed version={installed}", flush=True)
+
+
+def patch_vllm_tilelang_probe(target: Path) -> None:
+    import_utils = target / "vllm" / "utils" / "import_utils.py"
+    if not import_utils.exists():
+        return
+    text = import_utils.read_text()
+    if "VLLM_BENCH_DISABLE_TILELANG" in text:
+        return
+    pattern = (
+        r"@cache\n"
+        r"def has_tilelang\(\) -> bool:\n"
+        r"    \"\"\"Whether the optional `tilelang` package is available\.\"\"\"\n"
+        r"    return _has_module\(\"tilelang\"\)\n"
+    )
+    replacement = (
+        "@cache\n"
+        "def has_tilelang() -> bool:\n"
+        "    \"\"\"Whether the optional `tilelang` package is available.\"\"\"\n"
+        "    if os.environ.get(\"VLLM_BENCH_DISABLE_TILELANG\", \"1\").lower() not in {\"0\", \"false\", \"no\", \"off\"}:\n"
+        "        return False\n"
+        "    return _has_module(\"tilelang\")\n"
+    )
+    patched, count = re.subn(pattern, replacement, text)
+    if count != 1:
+        print(f"vllm_tilelang_patch=skipped path={import_utils} pattern_count={count}", flush=True)
+        return
+    import_utils.write_text(patched)
+    print(f"vllm_tilelang_patch=applied path={import_utils}", flush=True)
 
 
 def add_src_to_path(src_dir: Path) -> None:
@@ -135,6 +168,7 @@ def apply_vllm_env(args: argparse.Namespace) -> None:
         os.environ["VLLM_DISABLED_KERNELS"] = args.vllm_disabled_kernels
     else:
         os.environ.pop("VLLM_DISABLED_KERNELS", None)
+    os.environ["VLLM_BENCH_DISABLE_TILELANG"] = "1" if args.disable_tilelang else "0"
 
 
 def register_olmo3sink(src_dir: Path, skip: bool) -> None:
@@ -642,6 +676,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vllm-wheel-url", default=DEFAULT_VLLM_RUNTIME_WHEEL_URL)
     parser.add_argument("--vllm-version-fragment", default=DEFAULT_VLLM_VERSION_FRAGMENT)
     parser.add_argument("--vllm-install-dir", default=DEFAULT_VLLM_INSTALL_DIR)
+    parser.add_argument(
+        "--disable-tilelang",
+        type=str_to_bool,
+        default=True,
+        help="Patch the isolated vLLM target so optional TileLang kernels are unavailable.",
+    )
     parser.add_argument(
         "--vllm-disabled-kernels",
         default=os.environ.get("VLLM_DISABLED_KERNELS", DEFAULT_VLLM_DISABLED_KERNELS),
