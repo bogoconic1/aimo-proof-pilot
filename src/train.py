@@ -2367,12 +2367,14 @@ def patch_runtime_vllm_pr47258() -> None:
     try:
         import vllm.model_executor.layers.fused_moe.oracle.fp8 as fp8_oracle
         import vllm.model_executor.warmup.deep_gemm_warmup as deep_gemm_warmup
+        import vllm.model_executor.warmup.kernel_warmup as kernel_warmup
     except Exception as exc:
         log(f"WARNING: Could not import vLLM modules for PR47258 runtime patch: {exc}")
         return
 
     fp8_path = Path(fp8_oracle.__file__)
     warmup_path = Path(deep_gemm_warmup.__file__)
+    kernel_warmup_path = Path(kernel_warmup.__file__)
     patched_files: list[str] = []
 
     try:
@@ -2457,6 +2459,35 @@ def _remove_deep_gemm_if_auto_disabled(
         if text != original:
             warmup_path.write_text(text, encoding="utf-8")
             patched_files.append(str(warmup_path))
+
+        text = kernel_warmup_path.read_text(encoding="utf-8")
+        original = text
+        if "VLLM_SKIP_DEEPSEEK_V4_SPARSE_MLA_WARMUP" not in text:
+            text = text.replace(
+                "from typing import TYPE_CHECKING\n\nimport torch\n",
+                "from typing import TYPE_CHECKING\n\nimport os\n\nimport torch\n",
+                1,
+            )
+            old = '''    # Run next so input-prep kernels JIT against pristine runner state.
+    flashinfer_sparse_mla_decode_autotune_warmup(worker)
+    deepseek_v4_sparse_mla_attention_warmup(worker)
+'''
+            new = '''    # Run next so input-prep kernels JIT against pristine runner state.
+    # DeepSeek-V4 sparse MLA warmup is optional and can fail on some H200
+    # clusters with "invalid resource handle" even though the runtime kernel is
+    # usable. Keep it guarded until vLLM exposes an upstream switch.
+    if os.getenv("VLLM_SKIP_DEEPSEEK_V4_SPARSE_MLA_WARMUP", "0") == "1":
+        logger.info("Skipping DeepSeek V4 sparse MLA startup warmup by environment request.")
+    else:
+        flashinfer_sparse_mla_decode_autotune_warmup(worker)
+        deepseek_v4_sparse_mla_attention_warmup(worker)
+'''
+            if old not in text:
+                raise RuntimeError(f"Could not find sparse MLA warmup marker in {kernel_warmup_path}")
+            text = text.replace(old, new, 1)
+        if text != original:
+            kernel_warmup_path.write_text(text, encoding="utf-8")
+            patched_files.append(str(kernel_warmup_path))
     except Exception as exc:
         log(f"WARNING: vLLM PR47258 runtime patch failed: {exc}")
         return

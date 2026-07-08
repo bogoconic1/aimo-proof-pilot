@@ -69,6 +69,11 @@ export VLLM_ALLOW_INSECURE_SERIALIZATION="${VLLM_ALLOW_INSECURE_SERIALIZATION:-1
 # keeps the normal non-eager vLLM compile/cudagraph path, matching the standalone
 # vllm serve baseline for this checkpoint.
 export VLLM_USE_BREAKABLE_CUDAGRAPH="${VLLM_USE_BREAKABLE_CUDAGRAPH:-0}"
+# The DeepSeek-V4 sparse MLA startup warmup can fail with an invalid resource
+# handle on the cluster even after normal vLLM startup gets past model load.
+# This does not change the runtime attention backend; it only skips optional
+# warmup dummy runs.
+export VLLM_SKIP_DEEPSEEK_V4_SPARSE_MLA_WARMUP="${VLLM_SKIP_DEEPSEEK_V4_SPARSE_MLA_WARMUP:-1}"
 export HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}"
 export WANDB_MODE="${WANDB_MODE:-online}"
 export WANDB_PROJECT="${WANDB_PROJECT:-olmo3-prime-rl-full-vocab-3node}"
