@@ -187,9 +187,9 @@ DEFAULT_PRIME_RL_SOURCE_REQUIREMENTS = (
 )
 DEFAULT_PRIME_RL_RUNTIME_REQUIREMENTS = (
     # Prime-RL/vLLM 0.24 currently trips OLMo3Sink RoPE loading with dict
-    # rope_scaling values. The runtime dependency resolver installs
-    # DEFAULT_VLLM_RUNTIME_WHEEL_URL by default; set PRIME_RL_RUNTIME_INSTALL_VLLM=0
-    # to keep the baked image wheel, or PRIME_RL_RUNTIME_VLLM_WHEEL_URL to override.
+    # rope_scaling values. The runtime bootstrap installs DEFAULT_VLLM_RUNTIME_WHEEL_URL
+    # separately with --no-deps; set PRIME_RL_RUNTIME_INSTALL_VLLM=0 to keep the
+    # baked image wheel, or PRIME_RL_RUNTIME_VLLM_WHEEL_URL to override.
     # Prime-RL's W&B monitor imports the historical wandb_gql module. Our
     # runtime source tree provides a compatibility module backed by
     # graphql-core, and these versions match current Prime-RL metadata.
@@ -1825,16 +1825,22 @@ def prime_rl_runtime_requirements() -> list[str]:
             + " ".join(skipped)
         )
     requirements = filtered
-    vllm_wheel = os.environ.get("PRIME_RL_RUNTIME_VLLM_WHEEL_URL", "").strip()
-    if allow_runtime_vllm:
-        vllm_wheel = vllm_wheel or DEFAULT_VLLM_RUNTIME_WHEEL_URL
-    if vllm_wheel:
-        requirements.insert(0, vllm_wheel)
     return requirements
 
 
 def prime_rl_runtime_requirements_string() -> str:
     return "\n".join(prime_rl_runtime_requirements())
+
+
+def prime_rl_runtime_vllm_wheel_url() -> str:
+    if not parse_bool(os.environ.get("PRIME_RL_RUNTIME_INSTALL_VLLM"), True):
+        return ""
+    wheel_url = os.environ.get("PRIME_RL_RUNTIME_VLLM_WHEEL_URL", "").strip()
+    if not wheel_url:
+        wheel_url = DEFAULT_VLLM_RUNTIME_WHEEL_URL
+    if wheel_url.lower() in {"", "0", "false", "none", "off", "skip", "disabled"}:
+        return ""
+    return wheel_url
 
 
 def prime_rl_runtime_vllm_expected_fragment() -> str:
@@ -2954,6 +2960,18 @@ def prepare_runtime_training_dependencies(
         if not prime_rl_dir_value:
             raise RuntimeError("Prime-RL backend requires PRIME_RL_DIR from runtime fetch or --prime_rl_dir")
         prime_rl_dir = Path(prime_rl_dir_value)
+        runtime_vllm_wheel = prime_rl_runtime_vllm_wheel_url()
+        if runtime_vllm_wheel:
+            # Keep vLLM pinned for OLMo3Sink compatibility, but do not let pip
+            # expand the vLLM dependency tree into the per-run overlay. On the
+            # cluster this can unpack huge flashinfer_cubin trees and exhaust
+            # /tmp quota before training starts.
+            install_python_target(
+                runtime_vllm_wheel,
+                site_dir,
+                "Prime-RL vLLM runtime",
+                no_deps=True,
+            )
         runtime_requirements = prime_rl_runtime_requirements()
         if runtime_requirements:
             install_python_requirements(runtime_requirements, site_dir, "Prime-RL runtime", no_deps=False)
