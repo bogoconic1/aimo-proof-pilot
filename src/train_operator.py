@@ -455,6 +455,16 @@ def download_github_git_text(args: argparse.Namespace, repo: str, path_in_repo: 
         repo_dir = ensure_github_git_repo(args, repo, branch)
         path = repo_dir / path_in_repo
         if not path.is_file():
+            logging.warning(
+                "%s/%s not found in Git worktree %s; force-syncing and retrying once.",
+                repo,
+                path_in_repo,
+                repo_dir,
+            )
+            shutil.rmtree(repo_dir, ignore_errors=True)
+            repo_dir = ensure_github_git_repo(args, repo, branch)
+            path = repo_dir / path_in_repo
+        if not path.is_file():
             raise FileNotFoundError(f"{repo}/{path_in_repo} not found in git worktree")
         return path.read_text(encoding="utf-8", errors="replace")
 
