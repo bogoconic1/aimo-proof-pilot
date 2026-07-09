@@ -452,7 +452,7 @@ COMMON_ARGS=(
   --prime_opd_full_vocab_teacher_lm_head_path "${PRIME_OPD_FULL_VOCAB_TEACHER_LM_HEAD_PATH:-${TEACHER_MODEL_PATH}}"
   --prime_opd_full_vocab_teacher_lm_head_key "${PRIME_OPD_FULL_VOCAB_TEACHER_LM_HEAD_KEY:-head.weight}"
   --prime_opd_full_vocab_teacher_hidden_dtype "${PRIME_OPD_FULL_VOCAB_TEACHER_HIDDEN_DTYPE:-bfloat16}"
-  --prime_opd_full_vocab_token_chunk_size "${PRIME_OPD_FULL_VOCAB_TOKEN_CHUNK_SIZE:-16}"
+  --prime_opd_full_vocab_token_chunk_size "${PRIME_OPD_FULL_VOCAB_TOKEN_CHUNK_SIZE:-512}"
   --prime_opd_full_vocab_vocab_chunk_size "${PRIME_OPD_FULL_VOCAB_VOCAB_CHUNK_SIZE:-8192}"
   --prime_env_id proof-opd-env
   --prime_env_name proof_math
