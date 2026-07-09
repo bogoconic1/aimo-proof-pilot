@@ -333,6 +333,13 @@ def configure_github_git_sparse_checkout(repo_dir: Path, patterns: list[str]) ->
     sparse_file.write_text("\n".join(patterns) + "\n", encoding="utf-8")
 
 
+def disable_github_git_sparse_checkout(repo_dir: Path) -> None:
+    run_github_git(["config", "core.sparseCheckout", "false"], cwd=repo_dir)
+    sparse_file = repo_dir / ".git" / "info" / "sparse-checkout"
+    if sparse_file.exists():
+        sparse_file.unlink()
+
+
 def clone_github_git_repo(args: argparse.Namespace, repo_url: str, repo_dir: Path, branch: str) -> None:
     sparse_patterns = github_git_sparse_checkout_patterns(args, branch)
     try:
@@ -401,7 +408,11 @@ def ensure_github_git_repo(args: argparse.Namespace, repo: str, branch: str) -> 
     try:
         run_github_git(["remote", "set-url", "origin", repo_url], cwd=repo_dir)
         run_github_git(["config", "commit.gpgsign", "false"], cwd=repo_dir)
-        configure_github_git_sparse_checkout(repo_dir, github_git_sparse_checkout_patterns(args, branch))
+        sparse_patterns = github_git_sparse_checkout_patterns(args, branch)
+        if sparse_patterns:
+            configure_github_git_sparse_checkout(repo_dir, sparse_patterns)
+        else:
+            disable_github_git_sparse_checkout(repo_dir)
         run_github_git(["reset", "--hard"], cwd=repo_dir)
         run_github_git(["clean", "-fd"], cwd=repo_dir)
         try:
